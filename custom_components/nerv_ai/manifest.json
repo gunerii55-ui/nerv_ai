@@ -1,7 +1,7 @@
 {
   "domain": "nerv_ai",
   "name": "NervAI",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "documentation": "https://github.com/gunerii55-ui/nerv_ai",
   "issue_tracker": "https://github.com/gunerii55-ui/nerv_ai/issues",
   "dependencies": [],

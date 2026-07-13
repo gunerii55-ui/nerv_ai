@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NervAI Yapılandırması",
+        "description": "API bilgilerinizi girin. Bu bilgiler güvenli bir şekilde saklanacaktır.",
+        "data": {
+          "telegram_token": "Telegram Bot Token (BotFather'dan alınan)",
+          "openai_api_key": "OpenAI API Anahtarı"
+        }
+      }
+    }
+  }
+}
