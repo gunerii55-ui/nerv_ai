@@ -1,16 +1,16 @@
 {
   "domain": "nerv_ai",
   "name": "NervAI",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "documentation": "https://github.com/gunerii55-ui/nerv_ai",
   "issue_tracker": "https://github.com/gunerii55-ui/nerv_ai/issues",
   "dependencies": [],
   "codeowners": ["@gunerii55-ui"],
   "requirements": [
-    "python-telegram-bot==21.3",
-    "openai==2.21.0",
-    "anthropic==0.30.1",
-    "aiosqlite==0.20.0"
+    "python-telegram-bot==22.8",
+    "openai",
+    "anthropic",
+    "aiosqlite"
   ],
   "iot_class": "cloud_polling",
   "integration_type": "hub",
