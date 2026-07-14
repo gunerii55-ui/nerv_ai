@@ -15,6 +15,12 @@ from .core.orchestrator import ConversationOrchestrator
 from .memory.store import MemoryStore
 from .providers.openai import OpenAIProvider  # openai.py olduğunu söyledin
 
+# Gerçek modüllerini çekiyoruz
+from .channels.telegram import TelegramBot
+from .core.orchestrator import ConversationOrchestrator
+from .memory.store import MemoryStore
+from .providers.openai import OpenAIProvider  # openai.py olduğunu söyledin
+
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = []
 
@@ -22,7 +28,6 @@ class HABridgeImpl:
     """Implementation of the HomeAssistantBridge."""
     def __init__(self, hass: HomeAssistant):
         self._hass = hass
-        self._pending_actions = {}
 
     async def get_available_entities(self, domain: str, search: str | None = None, limit: int = 30) -> list[dict]:
         """Sadece Assist'e açık cihazları döndürür. Search filtresi destekler."""
