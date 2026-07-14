@@ -21,13 +21,19 @@ class OpenAIProvider(LLMProvider):
 
     async def send_message(self, context: list[dict], tools: list[dict] | None = None) -> dict:
         """Mesajı gönder ve Raw Response Objeyi dön."""
+        import json # Sadece debug için ekliyoruz
+        
         kwargs = {
             "model": self._model,
             "messages": context,
         }
+        
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+            _LOGGER.warning("NervAI Debug - Tools being sent: %s", json.dumps(tools, indent=2)[:800])
+        else:
+            _LOGGER.warning("NervAI Debug - Tools payload is EMPTY or NONE!")
             
         response = await self._client.chat.completions.create(**kwargs)
         return response.choices[0].message
