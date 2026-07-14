@@ -22,10 +22,16 @@ class HABridgeImpl:
     def __init__(self, hass: HomeAssistant):
         self._hass = hass
 
-    async def get_available_entities(self, domain: str) -> list[str]:
-        # İleride registry filtresi eklenebilir, şimdilik tüm domain state'leri döner
+    async def get_available_entities(self, domain: str) -> list[dict]:
         states = self._hass.states.async_all(domain)
-        return [state.entity_id for state in states]
+        # Sadece ID değil, görünen adı da (Friendly Name) LLM'e gönderiyoruz
+        return [
+            {
+                "id": state.entity_id, 
+                "name": state.attributes.get("friendly_name", state.entity_id)
+            } 
+            for state in states
+        ]
 
     async def execute_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> dict:
         if entity_id not in self._hass.states.async_entity_ids():
