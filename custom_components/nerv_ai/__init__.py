@@ -21,36 +21,28 @@ class HABridgeImpl:
     """Implementation of the HomeAssistantBridge."""
     def __init__(self, hass: HomeAssistant):
         self._hass = hass
-        self._pending_actions = {}
 
-    async def execute_tool_call(self, call: dict, chat_id: str) -> dict:
-        args = call.get("arguments", {})
-        domain = args.get("domain")
-        service = args.get("service")
-        
-        if domain in {"lock", "alarm_control_panel", "cover"}:
-            token = str(uuid.uuid4())[:8]
-            self._pending_actions[token] = call
-            return {
-                "status": "confirmation_required", 
-                "token": token,
-                "message": f"{domain}.{service} requires confirmation. Command: /confirm {token}"
-            }
-        
-        return await self._call_service_safe(domain, service, args.get("entity_id"), args.get("data"))
+    async def get_available_entities(self, domain: str) -> list[str]:
+        # İleride registry filtresi eklenebilir, şimdilik tüm domain state'leri döner
+        states = self._hass.states.async_all(domain)
+        return [state.entity_id for state in states]
 
-    async def _call_service_safe(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> dict:
+    async def execute_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> dict:
         if entity_id not in self._hass.states.async_entity_ids():
             return {"status": "error", "message": f"Unknown entity: {entity_id}"}
         try:
-            await self._hass.services.async_call(
-                domain, service, {"entity_id": entity_id, **(data or {})},
-                blocking=True
+            # Claude kalkanı: 10 Saniye Timeout
+            await asyncio.wait_for(
+                self._hass.services.async_call(
+                    domain, service, {"entity_id": entity_id, **(data or {})}, blocking=True
+                ),
+                timeout=10.0
             )
             return {"status": "ok", "message": "Service executed successfully."}
+        except asyncio.TimeoutError:
+            return {"status": "error", "message": "Service call timed out after 10s"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
-
     async def get_state(self, entity_id: str) -> str | None:
         state = self._hass.states.get(entity_id)
         return state.state if state else None
