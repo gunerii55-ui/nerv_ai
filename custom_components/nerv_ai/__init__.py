@@ -69,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     provider = OpenAIProvider(api_key=openai_key)
     
-    orchestrator = ConversationOrchestrator(store=store, provider=provider)
+    orchestrator = ConversationOrchestrator(store=store, provider=provider, bridge=bridge)
     bot = TelegramBot(token=telegram_token, ha_bridge=bridge, orchestrator=orchestrator)
 
     hass.data[DOMAIN][entry.entry_id] = {
