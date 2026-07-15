@@ -1,51 +1,34 @@
-"""OpenAI Provider for NervAI."""
 import logging
-from openai import AsyncOpenAI
-from .base import LLMProvider
 
 _LOGGER = logging.getLogger(__name__)
 
-try:
-    import tiktoken
-    _ENC = tiktoken.get_encoding("cl100k_base")
-    HAS_TIKTOKEN = True
-except ImportError:
-    HAS_TIKTOKEN = False
-    _LOGGER.warning("NervAI: tiktoken not found. Using text length fallback.")
-
-class OpenAIProvider(LLMProvider):
+class OpenAIProvider:
     def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._api_key = api_key
         self._model = model
-        self._max_context_tokens = 120000
+        self._client = None
 
-    async def send_message(self, context: list[dict], tools: list[dict] | None = None) -> dict:
-        """Mesajı gönder ve Raw Response Objeyi dön."""
-        import json # Sadece debug için ekliyoruz
+    def _get_client(self):
+        # Tembel Yükleme (Lazy Loading): HA Event Loop bloklanmasını engeller.
+        # Sadece mesaj gönderileceği an import edilir.
+        if not self._client:
+            from openai import AsyncOpenAI
+            self._client = AsyncOpenAI(api_key=self._api_key)
+        return self._client
+
+    async def send_message(self, messages: list, tools: list = None):
+        client = self._get_client()
         
         kwargs = {
             "model": self._model,
-            "messages": context,
+            "messages": messages,
         }
-        
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-            _LOGGER.warning("NervAI Debug - Tools being sent: %s", json.dumps(tools, indent=2)[:800])
-        else:
-            _LOGGER.warning("NervAI Debug - Tools payload is EMPTY or NONE!")
-            
-        response = await self._client.chat.completions.create(**kwargs)
-        return response.choices[0].message
 
-    async def list_models(self) -> list[str]:
-        return ["gpt-4o-mini", "gpt-4o"]
-
-    def count_tokens(self, text: str) -> int:
-        if HAS_TIKTOKEN:
-            return len(_ENC.encode(text))
-        return len(text) // 3
-
-    @property
-    def max_context_tokens(self) -> int:
-        return self._max_context_tokens
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            return response.choices[0].message
+        except Exception as e:
+            _LOGGER.error(f"NervAI OpenAI Hatası: {e}")
+            raise
