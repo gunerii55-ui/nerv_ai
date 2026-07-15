@@ -56,24 +56,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     orchestrator = ConversationOrchestrator(store=store, provider=OpenAIProvider(api_key=entry.data.get("openai_api_key")), bridge=bridge)
     bot = TelegramBot(token=entry.data.get("telegram_token"), ha_bridge=bridge, orchestrator=orchestrator)
 
-    hass.data[DOMAIN][entry.entry_id] = {"db": db, "telegram_app": bot.app}
+    # bot.app yerine bot'un kendisini kaydediyoruz
+    hass.data[DOMAIN][entry.entry_id] = {"db": db, "telegram_bot": bot}
     hass.async_create_background_task(bot.initialize_and_start(), name="NervAI_Telegram_Polling")
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry strictly and safely."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         return True
 
-    app = data.get("telegram_app")
-    if app:
+    bot = data.get("telegram_bot")
+    if bot and bot.app:
         try:
-            if app.updater and app.updater.running:
-                await asyncio.wait_for(app.updater.stop(), timeout=10)
-            if app.running:
-                await asyncio.wait_for(app.stop(), timeout=10)
-            await app.shutdown()
+            if bot.app.updater and bot.app.updater.running:
+                await asyncio.wait_for(bot.app.updater.stop(), timeout=10)
+            if bot.app.running:
+                await asyncio.wait_for(bot.app.stop(), timeout=10)
+            await bot.app.shutdown()
         except asyncio.TimeoutError:
             _LOGGER.warning("NervAI: Telegram app shutdown timed out, forcing.")
 
