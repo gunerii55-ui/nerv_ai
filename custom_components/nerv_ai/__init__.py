@@ -12,13 +12,25 @@ class HABridgeImpl:
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
 
-    async def get_available_entities(self, domain: str) -> list[dict]:
+    async def get_available_entities(self, domain: str, search: str = None) -> list[dict]:
+        """
+        domain: (str) light, climate vb.
+        search: (str) opsiyonel arama terimi
+        """
         states = self.hass.states.async_all(domain)
-        return [{"id": s.entity_id, "name": s.attributes.get("friendly_name", s.entity_id)} for s in states if async_should_expose(self.hass, "conversation", s.entity_id)]
-
-    async def get_state(self, entity_id):
-        state = self.hass.states.get(entity_id)
-        return {"state": state.state, "attributes": dict(state.attributes)} if state else {"error": "Not found"}
+        entities = []
+        for state in states:
+            if not async_should_expose(self.hass, "conversation", state.entity_id):
+                continue
+            
+            name = state.attributes.get("friendly_name", state.entity_id)
+            
+            # Arama filtresi mantığı
+            if search and search.lower() not in name.lower() and search.lower() not in state.entity_id.lower():
+                continue
+                
+            entities.append({"id": state.entity_id, "name": name})
+        return entities
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
         data = service_data or {}
@@ -29,6 +41,9 @@ class HABridgeImpl:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    async def get_state(self, entity_id):
+        state = self.hass.states.get(entity_id)
+        return {"state": state.state, "attributes": dict(state.attributes)} if state else {"error": "Not found"}
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .channels.telegram import TelegramBot
     from .core.orchestrator import ConversationOrchestrator
