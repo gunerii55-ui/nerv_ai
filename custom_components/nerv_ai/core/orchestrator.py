@@ -12,19 +12,18 @@ class ConversationOrchestrator:
 
     @property
     def _tools(self):
-        """Tüm cihazlar için generic tool tanımı."""
         return [{
             "type": "function",
             "function": {
                 "name": "execute_service",
-                "description": "Evdeki herhangi bir cihazı kontrol et (ışık, klima, kilit, vs.).",
+                "description": "Evdeki herhangi bir cihazı kontrol et (ışık, klima, kilit, vb.).",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "domain": {"type": "string"},
                         "service": {"type": "string"},
                         "entity_id": {"type": "string"},
-                        "service_data": {"type": "object"}
+                        "service_data": {"type": "object", "description": "Servis için gerekli parametreler (örn: temperature, brightness)"}
                     },
                     "required": ["domain", "service"]
                 }
@@ -51,7 +50,7 @@ class ConversationOrchestrator:
         context.extend(raw["recent_log"])
         context.append({"role": "user", "content": user_message})
 
-        for _ in range(5):
+        for _ in range(3): # Loop derinliğini sınırladık
             response = await self._provider.send_message(context, tools=self._tools)
             if not response.tool_calls:
                 final = response.content or "Anlaşıldı."
@@ -61,11 +60,12 @@ class ConversationOrchestrator:
             context.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
             for tool_call in response.tool_calls:
                 args = json.loads(tool_call.function.arguments)
-                domain, service = args.pop("domain"), args.pop("service")
+                domain = args.pop("domain")
+                service = args.pop("service")
                 entity_id = args.pop("entity_id", None)
-                # Kalan tüm args -> service_data (TypeError'u çözer)
-                service_data = args 
+                service_data = args.pop("service_data", args) # service_data yoksa kalan args'ı kullan
                 
+                # Güvenlik Kalkanı
                 if domain in {"lock", "alarm_control_panel"}:
                     return f"'{service}' işlemi onay gerektiriyor. Yapmamı onaylıyor musun?"
                 

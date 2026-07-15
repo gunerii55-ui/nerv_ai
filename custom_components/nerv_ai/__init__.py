@@ -17,12 +17,12 @@ class HABridgeImpl:
         return [{"id": s.entity_id, "name": s.attributes.get("friendly_name", s.entity_id)} for s in states if async_should_expose(self.hass, "conversation", s.entity_id)]
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
-        # En güvenli, en esnek çağrı yapısı
         data = service_data or {}
         if entity_id:
             data["entity_id"] = entity_id
             
         try:
+            # HATA GİDERİCİ: kwargs açılımı (unpacking) yerine doğrudan sözlük (dict) geçiyoruz.
             await self.hass.services.async_call(
                 domain, 
                 service, 
