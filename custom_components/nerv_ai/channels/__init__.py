@@ -1,6 +1,5 @@
 """Telegram channel implementation for NervAI."""
 import logging
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from .base import HomeAssistantBridge
 
 _LOGGER = logging.getLogger(__name__)
@@ -16,6 +15,7 @@ class TelegramBot:
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
     async def initialize_and_start(self):
+	from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
         """HA async_setup_entry içinde çağrılacak asenkron başlatıcı."""
         await self.app.initialize()
         await self.app.start()
