@@ -1,4 +1,5 @@
 import logging
+import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -8,27 +9,26 @@ class OpenAIProvider:
         self._model = model
         self._client = None
 
-    def _get_client(self):
-        # Tembel Yükleme (Lazy Loading): HA Event Loop bloklanmasını engeller.
-        # Sadece mesaj gönderileceği an import edilir.
+    async def _get_client(self):
         if not self._client:
-            from openai import AsyncOpenAI
-            self._client = AsyncOpenAI(api_key=self._api_key)
+            def _init_client_sync():
+                # Import ve Client Instantiation ana loop'tan izole
+                from openai import AsyncOpenAI
+                return AsyncOpenAI(api_key=self._api_key)
+            
+            self._client = await asyncio.to_thread(_init_client_sync)
         return self._client
 
     async def send_message(self, messages: list, tools: list = None):
-        client = self._get_client()
+        client = await self._get_client()
         
-        kwargs = {
-            "model": self._model,
-            "messages": messages,
-        }
-        if tools:
-            kwargs["tools"] = tools
+        kwargs = {"model": self._model, "messages": messages}
+        if tools: kwargs["tools"] = tools
 
         try:
+            # API çağrısı zaten awaitable, bloklamaz
             response = await client.chat.completions.create(**kwargs)
             return response.choices[0].message
         except Exception as e:
-            _LOGGER.error(f"NervAI OpenAI Hatası: {e}")
+            _LOGGER.error(f"OpenAI Error: {e}")
             raise
