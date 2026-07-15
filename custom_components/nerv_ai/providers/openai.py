@@ -12,7 +12,7 @@ class OpenAIProvider:
     async def _get_client(self):
         if not self._client:
             def _init_client_sync():
-                # Import ve Client Instantiation ana loop'tan izole
+                # OpenAI 2.x ile uyumlu AsyncOpenAI importu
                 from openai import AsyncOpenAI
                 return AsyncOpenAI(api_key=self._api_key)
             
@@ -26,9 +26,9 @@ class OpenAIProvider:
         if tools: kwargs["tools"] = tools
 
         try:
-            # API çağrısı zaten awaitable, bloklamaz
+            # 2.x sürümü de chat.completions.create yapısını destekler
             response = await client.chat.completions.create(**kwargs)
             return response.choices[0].message
         except Exception as e:
-            _LOGGER.error(f"OpenAI Error: {e}")
+            _LOGGER.error(f"OpenAI 2.x API Hatası: {e}")
             raise
