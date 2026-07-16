@@ -32,14 +32,20 @@ class HABridgeImpl:
         return entities
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
-        # Girinti düzeltildi ve güvenlik kontrolleri içeri alındı
         if not entity_id:
             return {"status": "error", "message": "entity_id eksik, önce search_devices ile gerçek entity_id'yi bul."}
         
         if not self.hass.states.get(entity_id):
             return {"status": "error", "message": f"'{entity_id}' isimli bir cihaz sistemde bulunamadı."}
-        
-        # '...' yerine gerçek servis çağrısı (işlem bloğu) eklendi
+
+        # LLM Self-Healing Mekanizması
+        if not self.hass.services.has_service(domain, service):
+            valid_services = list(self.hass.services.async_services().get(domain, {}).keys())
+            return {
+                "status": "error",
+                "message": f"'{domain}.{service}' diye bir servis yok. '{domain}' domaini için geçerli servisler: {valid_services}. Bunlardan birini kullan.",
+            }
+
         data = service_data or {}
         data["entity_id"] = entity_id
         
