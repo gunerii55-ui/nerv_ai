@@ -20,8 +20,9 @@ class MemoryStore:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+                # Tablo versiyonlandı (v2). Eski çakışma atlatıldı.
                 await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS learned_facts (
+                    CREATE TABLE IF NOT EXISTS learned_facts_v2 (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         chat_id TEXT NOT NULL,
                         category TEXT NOT NULL,
@@ -42,13 +43,13 @@ class MemoryStore:
     async def save_fact(self, chat_id: str, category: str, fact_text: str):
         async with self._db_lock:
             async with self._db.cursor() as cursor:
-                await cursor.execute("INSERT INTO learned_facts (chat_id, category, fact_text) VALUES (?, ?, ?)", (chat_id, category, fact_text))
+                await cursor.execute("INSERT INTO learned_facts_v2 (chat_id, category, fact_text) VALUES (?, ?, ?)", (chat_id, category, fact_text))
             await self._db.commit()
 
     async def get_active_facts(self, chat_id: str) -> str:
         async with self._db_lock:
             async with self._db.cursor() as cursor:
-                await cursor.execute("SELECT category, fact_text FROM learned_facts WHERE chat_id = ? AND is_active = 1", (chat_id,))
+                await cursor.execute("SELECT category, fact_text FROM learned_facts_v2 WHERE chat_id = ? AND is_active = 1", (chat_id,))
                 rows = await cursor.fetchall()
         
         if not rows:
