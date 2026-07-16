@@ -68,36 +68,61 @@ class ConversationOrchestrator:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_fact",
+                    "description": "Kullanıcının bir rutinini, tercihini veya kalıcı isteğini ('her sabah aç', 'kışın 22 derece yap' vb.) hafızaya kaydet.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string", "enum": ["routine", "preference", "general"]},
+                            "fact_text": {"type": "string", "description": "Öğrenilen bilgi veya kural (örn: 'Her sabah 7de perdeleri açılmak istiyor')"}
+                        },
+                        "required": ["category", "fact_text"],
+                    },
+                },
+            },
         ]
 
-    async def handle_message(self, chat_id: str, user_message: str) -> str:
+    async def handle_message(self, chat_id: str, user_message: str):
         msg = user_message.strip().lower()
 
-        # KRİTİK #1: Onay Hafızası
         if chat_id in self._pending_actions:
-            if msg in {"evet", "onaylıyorum", "yes", "tamam"}:
-                action = self._pending_actions.pop(chat_id)
-                res = await self._bridge.execute_service(**action)
-                return f"İşlem onaylandı, sonuç: {res.get('status')}"
-            else:
-                self._pending_actions.pop(chat_id)
-                return "İşlem iptal edildi."
+            if msg in {"evet", "onaylıyorum", "yes", "tamam", "confirm_action"}:
+                action = self._pending_actions.pop(chat_id, None)
+                if action:
+                    res = await self._bridge.execute_service(**action)
+                    return {"text": f"✅ İşlem onaylandı, sonuç: {res.get('status')}"}
+                else:
+                    return {"text": "Bu işlem zaten yanıtlandı veya zaman aşımına uğradı."}
+            elif msg in {"hayır", "iptal", "no", "cancel_action"}:
+                self._pending_actions.pop(chat_id, None)
+                return {"text": "❌ İşlem iptal edildi."}
 
-        context = [{"role": "system", "content": "Sen NervAI. Domain bazlı ara, Kilit/Alarm için onay al."}]
         raw = await self._store.build_context(chat_id)
+        
+        system_prompt = (
+            "Sen NervAI. Kilit/Alarm için onay al.\n"
+            "Kullanıcının kalıcı isteklerini/rutinlerini fark edersen 'save_fact' aracıyla hafızaya kaydet.\n\n"
+            f"{raw.get('facts', '')}"
+        )
+        
+        context = [{"role": "system", "content": system_prompt}]
         context.extend(raw["recent_log"])
-        context.append({"role": "user", "content": user_message})
+        
+        display_msg = "Butona tıklandı." if msg in {"confirm_action", "cancel_action"} else user_message
+        context.append({"role": "user", "content": display_msg})
 
         for _ in range(5):
             response = await self._provider.send_message(context, tools=self._tools)
             
             if not response.tool_calls:
                 final = response.content or "Anlaşıldı."
-                await self._store.save_turn(chat_id, user_message, final)
-                return final
+                await self._store.save_turn(chat_id, display_msg, final)
+                return {"text": final}
 
             context.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
-
             pending_confirmation = None
 
             for tool_call in response.tool_calls:
@@ -111,7 +136,10 @@ class ConversationOrchestrator:
                     domain_arg = args.get("domain")
                     search_arg = args.get("search")
                     res = await self._bridge.get_available_entities(domain_arg, search_arg)
-                    _LOGGER.warning("NervAI DEBUG: search_devices domain='%s' search='%s' -> %d sonuç: %s", domain_arg, search_arg, len(res), res)
+
+                elif name == "save_fact":
+                    await self._store.save_fact(chat_id, args.get("category"), args.get("fact_text"))
+                    res = {"status": "ok", "message": "Bilgi başarıyla hafızaya kaydedildi."}
 
                 elif name == "execute_service":
                     entity_id = args.get("entity_id")
@@ -136,6 +164,12 @@ class ConversationOrchestrator:
 
             if pending_confirmation:
                 self._pending_actions[chat_id] = pending_confirmation
-                return f"'{pending_confirmation['service']}' işlemi onay gerektiriyor. Onaylıyor musunuz? (evet/hayır)"
+                return {
+                    "text": f"⚠️ '{pending_confirmation['service']}' işlemi onay gerektiriyor. Onaylıyor musunuz?",
+                    "buttons": [
+                        {"text": "✅ Onayla", "data": "confirm_action"},
+                        {"text": "❌ İptal", "data": "cancel_action"}
+                    ]
+                }
 
-        return "İşlemi tamamlayamadım, çok fazla adım gerekti."
+        return {"text": "İşlemi tamamlayamadım, çok fazla adım gerekti."}
