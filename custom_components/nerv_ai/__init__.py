@@ -1,4 +1,5 @@
-import logging, asyncio
+import logging
+import asyncio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
@@ -31,11 +32,28 @@ class HABridgeImpl:
         return entities
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
-    if not entity_id:
-        return {"status": "error", "message": "entity_id eksik, önce search_devices ile gerçek entity_id'yi bul."}
-    if not self.hass.states.get(entity_id):
-        return {"status": "error", "message": f"'{entity_id}' isimli bir cihaz sistemde bulunamadı."}
-    ...
+        # Girinti düzeltildi ve güvenlik kontrolleri içeri alındı
+        if not entity_id:
+            return {"status": "error", "message": "entity_id eksik, önce search_devices ile gerçek entity_id'yi bul."}
+        
+        if not self.hass.states.get(entity_id):
+            return {"status": "error", "message": f"'{entity_id}' isimli bir cihaz sistemde bulunamadı."}
+        
+        # '...' yerine gerçek servis çağrısı (işlem bloğu) eklendi
+        data = service_data or {}
+        data["entity_id"] = entity_id
+        
+        try:
+            await self.hass.services.async_call(
+                domain, 
+                service, 
+                service_data=data, 
+                blocking=True
+            )
+            return {"status": "ok"}
+        except Exception as e:
+            _LOGGER.error(f"Service Call Error: {e}")
+            return {"status": "error", "message": str(e)}
 
     async def get_state(self, entity_id):
         state = self.hass.states.get(entity_id)
