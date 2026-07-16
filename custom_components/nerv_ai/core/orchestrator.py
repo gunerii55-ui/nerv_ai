@@ -68,17 +68,21 @@ class ConversationOrchestrator:
             if not action:
                 return {"text": "⚠️ Bu işlem artık geçerli değil."}
 
+            # orchestrator.py içindeki confirm_action bloğu düzeltilmiş hali:
             if intent == "confirm_action":
-                res = await self._bridge.execute_service(action['domain'], action['service'], action['entity_id'], action['service_data'])
+                # Tüm alanlara .get() ile güvenli erişim sağlandı
+                res = await self._bridge.execute_service(
+                    action.get('domain'), 
+                    action.get('service'), 
+                    action.get('entity_id'), 
+                    action.get('service_data', {})
+                )
                 self._pending_actions[chat_id].remove(action)
-            else:
-                self._pending_actions[chat_id].remove(action)
-            
-            # GHOST FIX: Liste boşaldıysa dict'ten tamamen temizle
-            if not self._pending_actions[chat_id]:
-                del self._pending_actions[chat_id]
                 
-            return {"text": "✅ İşlem tamamlandı." if intent == "confirm_action" else "❌ İptal edildi."}
+                if not self._pending_actions[chat_id]:
+                    del self._pending_actions[chat_id]
+                    
+                return {"text": f"✅ İşlem onaylandı, sonuç: {res.get('status')}"}
 
         # ... (LLM akışı ve execute_service çağrısı)
 
