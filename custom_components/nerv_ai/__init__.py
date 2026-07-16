@@ -31,14 +31,11 @@ class HABridgeImpl:
         return entities
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
-        data = service_data or {}
-        if entity_id:
-            data["entity_id"] = entity_id
-        try:
-            await self.hass.services.async_call(domain, service, service_data=data, blocking=True)
-            return {"status": "ok"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+    if not entity_id:
+        return {"status": "error", "message": "entity_id eksik, önce search_devices ile gerçek entity_id'yi bul."}
+    if not self.hass.states.get(entity_id):
+        return {"status": "error", "message": f"'{entity_id}' isimli bir cihaz sistemde bulunamadı."}
+    ...
 
     async def get_state(self, entity_id):
         state = self.hass.states.get(entity_id)
