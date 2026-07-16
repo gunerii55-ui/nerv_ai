@@ -1,10 +1,12 @@
 import logging, json, asyncio
+
 _LOGGER = logging.getLogger(__name__)
+
 
 class ConversationOrchestrator:
     def __init__(self, store, provider, bridge):
         self._store, self._provider, self._bridge = store, provider, bridge
-        self._pending_actions = {} 
+        self._pending_actions = {}
 
     @property
     def _tools(self):
@@ -20,11 +22,11 @@ class ConversationOrchestrator:
                             "domain": {"type": "string"},
                             "service": {"type": "string"},
                             "entity_id": {"type": "string"},
-                            "service_data": {"type": "object"}
+                            "service_data": {"type": "object"},
                         },
-                        "required": ["domain", "service", "entity_id"]
-                    }
-                }
+                        "required": ["domain", "service", "entity_id"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -34,9 +36,9 @@ class ConversationOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {"entity_id": {"type": "string"}},
-                        "required": ["entity_id"]
-                    }
-                }
+                        "required": ["entity_id"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -46,10 +48,10 @@ class ConversationOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {"domain": {"type": "string"}},
-                        "required": ["domain"]
-                    }
-                }
-            }
+                        "required": ["domain"],
+                    },
+                },
+            },
         ]
 
     async def handle_message(self, chat_id: str, user_message: str) -> str:
@@ -65,7 +67,6 @@ class ConversationOrchestrator:
                 self._pending_actions.pop(chat_id)
                 return "İşlem iptal edildi."
 
-        # Mesaj işleme
         context = [{"role": "system", "content": "Sen NervAI. Domain bazlı ara, Kilit/Alarm için onay al."}]
         raw = await self._store.build_context(chat_id)
         context.extend(raw["recent_log"])
@@ -79,13 +80,37 @@ class ConversationOrchestrator:
                 return final
 
             context.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
+
             for tool_call in response.tool_calls:
                 args = json.loads(tool_call.function.arguments)
-                
-                if tool_call.function.name == "get_entity_state":
+                name = tool_call.function.name
+
+                if name == "get_entity_state":
                     res = await self._bridge.get_state(args["entity_id"])
                     context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
-                
-                elif tool_call.function.name == "search_devices":
+
+                elif name == "search_devices":
                     res = await self._bridge.get_available_entities(args["domain"])
-                    context.append({"role": "tool", "tool_call_id": tool_call.id,
+                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+
+                elif name == "execute_service":
+                    entity_id = args.get("entity_id")
+                    # KRİTİK #2: Domain doğrulaması LLM'in tahminine değil,
+                    # gerçek entity_id prefix'ine dayanmalı
+                    real_domain = entity_id.split(".")[0] if entity_id else args.get("domain")
+
+                    if real_domain in {"lock", "alarm_control_panel"}:
+                        self._pending_actions[chat_id] = {
+                            "domain": args.get("domain"),
+                            "service": args.get("service"),
+                            "entity_id": entity_id,
+                            "service_data": args.get("service_data") or {},
+                        }
+                        return f"'{args.get('service')}' işlemi onay gerektiriyor. Onaylıyor musunuz? (evet/hayır)"
+
+                    res = await self._bridge.execute_service(
+                        args.get("domain"), args.get("service"), entity_id, args.get("service_data") or {}
+                    )
+                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+
+        return "İşlemi tamamlayamadım, çok fazla adım gerekti."
