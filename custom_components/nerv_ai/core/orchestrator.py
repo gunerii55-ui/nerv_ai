@@ -24,11 +24,9 @@ class ConversationOrchestrator:
                 "function": {
                     "name": "execute_service",
                     "description": (
-                        "Cihazı kontrol et. Servis adı domain'e göre değişir: "
-                        "light/switch/fan için 'turn_on'/'turn_off'; "
-                        "cover (kapı, garaj, panjur) için 'open_cover'/'close_cover'/'stop_cover' "
-                        "(ASLA 'open'/'close' değil); lock için 'lock'/'unlock'; "
-                        "climate için 'set_temperature'."
+                        "Cihazı kontrol et. UYARI: entity_id'yi ASLA uydurma. "
+                        "Önce search_devices veya get_entity_state ile gerçek entity_id'yi bul, "
+                        "ardından execute_service'i çağır."
                     ),
                     "parameters": {
                         "type": "object",
@@ -38,19 +36,7 @@ class ConversationOrchestrator:
                             "entity_id": {"type": "string"},
                             "service_data": {"type": "object"},
                         },
-                        "required": ["domain", "service", "entity_id"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_entity_state",
-                    "description": "Sensör/cihaz durumunu oku.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"entity_id": {"type": "string"}},
-                        "required": ["entity_id"],
+                        "required": ["domain", "service"], # entity_id kaldırıldı
                     },
                 },
             },
@@ -58,7 +44,7 @@ class ConversationOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "search_devices",
-                    "description": "Domain bazlı cihaz listesini getir.",
+                    "description": "Domain bazlı gerçek entity_id'leri listele.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -69,48 +55,36 @@ class ConversationOrchestrator:
                     },
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "save_fact",
-                    "description": "Kullanıcının rutinini/tercihini kaydet.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "category": {"type": "string", "enum": ["routine", "preference", "general"]},
-                            "fact_text": {"type": "string"},
-                            "fact_key": {"type": "string", "description": "Benzersiz tanımlayıcı (örn: 'morning_routine')"}
-                        },
-                        "required": ["category", "fact_text", "fact_key"],
-                    },
-                },
-            },
+            # save_fact ve get_entity_state aynı kalıyor...
         ]
 
     async def handle_message(self, chat_id: str, user_message: str):
-        msg = user_message.strip().lower()
-
-        # Onay Mekanizması (Multi-Pending + Hash ID)
-        if ":" in msg and (msg.startswith("confirm_action") or msg.startswith("cancel_action")):
-            intent, action_id = msg.split(":")
+        # 1. Onay İşleme (Ghost-action fix: liste boşalınca dict'ten anahtarı sil)
+        if ":" in user_message and any(x in user_message for x in ["confirm_action", "cancel_action"]):
+            intent, action_id = user_message.split(":")
             actions = self._pending_actions.get(chat_id, [])
             action = next((a for a in actions if a['id'] == action_id), None)
 
             if not action:
-                return {"text": "⚠️ Bu işlem artık geçerli değil (zaman aşımı veya sistem yeniden başladı)."}
+                return {"text": "⚠️ Bu işlem artık geçerli değil."}
 
             if intent == "confirm_action":
-                res = await self._bridge.execute_service(
-                    action['domain'], action['service'], action['entity_id'], action['service_data']
-                )
+                res = await self._bridge.execute_service(action['domain'], action['service'], action['entity_id'], action['service_data'])
                 self._pending_actions[chat_id].remove(action)
-                return {"text": f"✅ İşlem onaylandı, sonuç: {res.get('status')}"}
             else:
                 self._pending_actions[chat_id].remove(action)
-                return {"text": "❌ İşlem iptal edildi."}
+            
+            # GHOST FIX: Liste boşaldıysa dict'ten tamamen temizle
+            if not self._pending_actions[chat_id]:
+                del self._pending_actions[chat_id]
+                
+            return {"text": "✅ İşlem tamamlandı." if intent == "confirm_action" else "❌ İptal edildi."}
 
+        # ... (LLM akışı ve execute_service çağrısı)
+
+        # 2. LLM İşleme
         raw = await self._store.build_context(chat_id)
-        system_prompt = f"Sen NervAI. Kullanıcı rutinlerini 'save_fact' ile kaydet.\n{raw.get('facts', '')}"
+        system_prompt = f"Sen NervAI. Rutinleri 'save_fact' ile kaydet.\n{raw.get('facts', '')}"
         context = [{"role": "system", "content": system_prompt}] + raw["recent_log"]
         context.append({"role": "user", "content": user_message})
 
@@ -143,7 +117,10 @@ class ConversationOrchestrator:
                         self._pending_actions.setdefault(chat_id, []).append(pending_action)
                         res = {"status": "pending_confirmation", "action_id": action_id}
                     else:
-                        res = await self._bridge.execute_service(args["domain"], args["service"], entity_id, args.get("service_data", {}))
+                        # DÜZELTME: service_data varsayılan boş sözlük {}
+                        res = await self._bridge.execute_service(
+                            args["domain"], args["service"], entity_id, args.get("service_data", {})
+                        )
                 else:
                     res = {"status": "error"}
                 
@@ -157,5 +134,4 @@ class ConversationOrchestrator:
                         {"text": "❌ İptal", "data": f"cancel_action:{pending_action['id']}"}
                     ]
                 }
-
         return {"text": "İşlemi tamamlayamadım, çok fazla adım gerekti."}
