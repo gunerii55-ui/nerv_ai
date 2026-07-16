@@ -73,48 +73,50 @@ class ConversationOrchestrator:
         context.append({"role": "user", "content": user_message})
 
         for _ in range(3):
-            response = await self._provider.send_message(context, tools=self._tools)
-            if not response.tool_calls:
-                final = response.content or "Anlaşıldı."
-                await self._store.save_turn(chat_id, user_message, final)
-                return final
+    response = await self._provider.send_message(context, tools=self._tools)
+    if not response.tool_calls:
+        final = response.content or "Anlaşıldı."
+        await self._store.save_turn(chat_id, user_message, final)
+        return final
 
-            context.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
+    context.append({"role": "assistant", "content": response.content, "tool_calls": response.tool_calls})
 
-            for tool_call in response.tool_calls:
-                args = json.loads(tool_call.function.arguments)
-                name = tool_call.function.name
+    pending_confirmation = None
 
-                if name == "get_entity_state":
-                    res = await self._bridge.get_state(args["entity_id"])
-                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+    for tool_call in response.tool_calls:
+        args = json.loads(tool_call.function.arguments)
+        name = tool_call.function.name
 
-                elif name == "search_devices":
-                    res = await self._bridge.get_available_entities(args["domain"])
-                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+        if name == "get_entity_state":
+            res = await self._bridge.get_state(args["entity_id"])
 
-                elif name == "execute_service":
-                    entity_id = args.get("entity_id")
-                    # KRİTİK #2: Domain doğrulaması LLM'in tahminine değil,
-                    # gerçek entity_id prefix'ine dayanmalı
-                    real_domain = entity_id.split(".")[0] if entity_id else args.get("domain")
-                # B. CİHAZ ARAMA (Search)
-                elif name == "search_devices":
-                    res = await self._bridge.get_available_entities(args["domain"], args.get("search"))
-                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+        elif name == "search_devices":
+            res = await self._bridge.get_available_entities(args["domain"])
 
-                    if real_domain in {"lock", "alarm_control_panel"}:
-                        self._pending_actions[chat_id] = {
-                            "domain": args.get("domain"),
-                            "service": args.get("service"),
-                            "entity_id": entity_id,
-                            "service_data": args.get("service_data") or {},
-                        }
-                        return f"'{args.get('service')}' işlemi onay gerektiriyor. Onaylıyor musunuz? (evet/hayır)"
+        elif name == "execute_service":
+            entity_id = args.get("entity_id")
+            real_domain = entity_id.split(".")[0] if entity_id else args.get("domain")
 
-                    res = await self._bridge.execute_service(
-                        args.get("domain"), args.get("service"), entity_id, args.get("service_data") or {}
-                    )
-                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+            if real_domain in {"lock", "alarm_control_panel"}:
+                pending_confirmation = {
+                    "domain": args.get("domain"),
+                    "service": args.get("service"),
+                    "entity_id": entity_id,
+                    "service_data": args.get("service_data") or {},
+                }
+                res = {"status": "pending_confirmation"}  # ← modele de bilgi veriyoruz, ama context'i hiç eksik bırakmıyoruz
+            else:
+                res = await self._bridge.execute_service(
+                    args.get("domain"), args.get("service"), entity_id, args.get("service_data") or {}
+                )
+        else:
+            res = {"status": "error", "message": f"Bilinmeyen araç: {name}"}
 
-        return "İşlemi tamamlayamadım, çok fazla adım gerekti."
+        # KRİTİK: her tool_call_id, ne olursa olsun MUTLAKA bir tool mesajıyla eşleşiyor
+        context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+
+    if pending_confirmation:
+        self._pending_actions[chat_id] = pending_confirmation
+        return f"'{pending_confirmation['service']}' işlemi onay gerektiriyor. Onaylıyor musunuz? (evet/hayır)"
+
+return "İşlemi tamamlayamadım, çok fazla adım gerekti."
