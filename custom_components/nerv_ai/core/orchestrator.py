@@ -61,7 +61,6 @@ class ConversationOrchestrator:
     async def handle_message(self, chat_id: str, user_message: str) -> str:
         msg = user_message.strip().lower()
 
-        # KRİTİK #1: Onay Hafızası
         if chat_id in self._pending_actions:
             if msg in {"evet", "onaylıyorum", "yes", "tamam"}:
                 action = self._pending_actions.pop(chat_id)
@@ -76,7 +75,6 @@ class ConversationOrchestrator:
         context.extend(raw["recent_log"])
         context.append({"role": "user", "content": user_message})
 
-        # Girinti (Indentation) Hataları Buradan İtibaren Düzeltildi
         for _ in range(3):
             response = await self._provider.send_message(context, tools=self._tools)
             
@@ -94,10 +92,15 @@ class ConversationOrchestrator:
                 name = tool_call.function.name
 
                 if name == "get_entity_state":
-                    res = await self._bridge.get_state(args["entity_id"])
+                    res = await self._bridge.get_state(args.get("entity_id"))
 
                 elif name == "search_devices":
-                    res = await self._bridge.get_available_entities(args.get("domain"), args.get("search"))
+                    domain_arg = args.get("domain")
+                    search_arg = args.get("search")
+                    res = await self._bridge.get_available_entities(domain_arg, search_arg)
+                    
+                    # LOG EKLENDİ
+                    _LOGGER.warning("NervAI DEBUG: search_devices domain='%s' search='%s' -> %d sonuç: %s", domain_arg, search_arg, len(res), res)
 
                 elif name == "execute_service":
                     entity_id = args.get("entity_id")
@@ -110,7 +113,7 @@ class ConversationOrchestrator:
                             "entity_id": entity_id,
                             "service_data": args.get("service_data") or {},
                         }
-                        res = {"status": "pending_confirmation"}  # Modele bilgi
+                        res = {"status": "pending_confirmation"}
                     else:
                         res = await self._bridge.execute_service(
                             args.get("domain"), args.get("service"), entity_id, args.get("service_data") or {}
@@ -118,7 +121,6 @@ class ConversationOrchestrator:
                 else:
                     res = {"status": "error", "message": f"Bilinmeyen araç: {name}"}
 
-                # KRİTİK: Her tool_call_id MUTLAKA bir tool mesajıyla eşleşiyor
                 context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
 
             if pending_confirmation:
