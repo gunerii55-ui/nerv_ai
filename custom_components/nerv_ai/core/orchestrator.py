@@ -4,6 +4,12 @@ import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 
+VALID_DOMAINS = [
+    "light", "switch", "cover", "lock", "climate", "fan",
+    "alarm_control_panel", "media_player", "vacuum",
+    "sensor", "binary_sensor", "camera",
+]
+
 class ConversationOrchestrator:
     def __init__(self, store, provider, bridge):
         self._store, self._provider, self._bridge = store, provider, bridge
@@ -20,7 +26,7 @@ class ConversationOrchestrator:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "domain": {"type": "string"},
+                            "domain": {"type": "string", "enum": VALID_DOMAINS},
                             "service": {"type": "string"},
                             "entity_id": {"type": "string"},
                             "service_data": {"type": "object"},
@@ -45,11 +51,11 @@ class ConversationOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "search_devices",
-                    "description": "Domain bazlı cihaz listesini getir.",
+                    "description": "Domain bazlı cihaz listesini getir. domain mutlaka HA domain adı olmalı (İngilizce, örn: kapı/panjur/garaj için 'cover', kilit için 'lock').",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "domain": {"type": "string"},
+                            "domain": {"type": "string", "enum": VALID_DOMAINS},
                             "search": {"type": "string"}
                         },
                         "required": ["domain"],
@@ -61,6 +67,7 @@ class ConversationOrchestrator:
     async def handle_message(self, chat_id: str, user_message: str) -> str:
         msg = user_message.strip().lower()
 
+        # KRİTİK #1: Onay Hafızası
         if chat_id in self._pending_actions:
             if msg in {"evet", "onaylıyorum", "yes", "tamam"}:
                 action = self._pending_actions.pop(chat_id)
@@ -98,8 +105,6 @@ class ConversationOrchestrator:
                     domain_arg = args.get("domain")
                     search_arg = args.get("search")
                     res = await self._bridge.get_available_entities(domain_arg, search_arg)
-                    
-                    # LOG EKLENDİ
                     _LOGGER.warning("NervAI DEBUG: search_devices domain='%s' search='%s' -> %d sonuç: %s", domain_arg, search_arg, len(res), res)
 
                 elif name == "execute_service":
