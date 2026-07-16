@@ -98,10 +98,10 @@ class ConversationOrchestrator:
                     # KRİTİK #2: Domain doğrulaması LLM'in tahminine değil,
                     # gerçek entity_id prefix'ine dayanmalı
                     real_domain = entity_id.split(".")[0] if entity_id else args.get("domain")
+                # B. CİHAZ ARAMA (Search)
                 elif name == "search_devices":
-    res = await self._bridge.get_available_entities(args["domain"])
-    _LOGGER.warning("NervAI DEBUG search_devices(%s) -> %s", args["domain"], res)
-    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
+                    res = await self._bridge.get_available_entities(args["domain"], args.get("search"))
+                    context.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(res)})
 
                     if real_domain in {"lock", "alarm_control_panel"}:
                         self._pending_actions[chat_id] = {
