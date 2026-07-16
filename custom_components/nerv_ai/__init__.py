@@ -16,20 +16,22 @@ class HABridgeImpl:
 
     async def get_available_entities(self, domain: str, search: str = None) -> list[dict]:
         states = self.hass.states.async_all(domain)
-        entities = []
+        exposed = [
+            {"id": s.entity_id, "name": s.attributes.get("friendly_name", s.entity_id)}
+            for s in states if async_should_expose(self.hass, "conversation", s.entity_id)
+        ]
 
-        for state in states:
-            if not async_should_expose(self.hass, "conversation", state.entity_id):
-                continue
+        if not search:
+            return exposed
 
-            name = state.attributes.get("friendly_name", state.entity_id)
+        filtered = [
+            e for e in exposed
+            if search.lower() in e["name"].lower() or search.lower() in e["id"].lower()
+        ]
 
-            if search and search.lower() not in name.lower() and search.lower() not in state.entity_id.lower():
-                continue
-
-            entities.append({"id": state.entity_id, "name": name})
-
-        return entities
+        # Çok dilli (Garage/Garaj) isim uyuşmazlığında modelin 
+        # semantik yeteneğine güvenmek için Fallback (Tam Liste)
+        return filtered if filtered else exposed
 
     async def execute_service(self, domain, service, entity_id=None, service_data=None):
         if not entity_id:
