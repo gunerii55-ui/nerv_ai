@@ -15,14 +15,21 @@ class HABridgeImpl:
     async def get_available_entities(self, domain: str, search: str = None) -> list[dict]:
         states = self.hass.states.async_all(domain)
         entities = []
+        
         for state in states:
+            # Conversation için açık değilse atla
             if not async_should_expose(self.hass, "conversation", state.entity_id):
                 continue
-            entities.append({
-                "id": state.entity_id, 
-                "name": state.attributes.get("friendly_name", state.entity_id)
-            })
-        return entities # Artık filtre yok, LLM'e tüm domain'i veriyoruz.
+                
+            name = state.attributes.get("friendly_name", state.entity_id)
+            
+            # Arama filtresi: Eğer arama terimi varsa ve isim/id içinde geçmiyorsa atla
+            if search and search.lower() not in name.lower() and search.lower() not in state.entity_id.lower():
+                continue
+                
+            entities.append({"id": state.entity_id, "name": name})
+            
+        return entities
             
             # Arama filtresi mantığı
             if search and search.lower() not in name.lower() and search.lower() not in state.entity_id.lower():
