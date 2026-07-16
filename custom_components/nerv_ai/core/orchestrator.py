@@ -36,7 +36,7 @@ class ConversationOrchestrator:
                             "entity_id": {"type": "string"},
                             "service_data": {"type": "object"},
                         },
-                        "required": ["domain", "service"], # entity_id kaldırıldı
+                        "required": ["domain", "service"],
                     },
                 },
             },
@@ -55,22 +55,35 @@ class ConversationOrchestrator:
                     },
                 },
             },
-            # save_fact ve get_entity_state aynı kalıyor...
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_fact",
+                    "description": "Kullanıcı rutinini/tercihini hafızaya kaydet.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string", "enum": ["routine", "preference", "general"]},
+                            "fact_text": {"type": "string"},
+                            "fact_key": {"type": "string"}
+                        },
+                        "required": ["category", "fact_text", "fact_key"],
+                    },
+                },
+            },
         ]
 
     async def handle_message(self, chat_id: str, user_message: str):
-        # 1. Onay İşleme (Ghost-action fix: liste boşalınca dict'ten anahtarı sil)
+        # 1. Onay İşleme (Multi-Pending Action)
         if ":" in user_message and any(x in user_message for x in ["confirm_action", "cancel_action"]):
             intent, action_id = user_message.split(":")
             actions = self._pending_actions.get(chat_id, [])
-            action = next((a for a in actions if a['id'] == action_id), None)
+            action = next((a for a in actions if a.get('id') == action_id), None)
 
             if not action:
                 return {"text": "⚠️ Bu işlem artık geçerli değil."}
 
-            # orchestrator.py içindeki confirm_action bloğu düzeltilmiş hali:
             if intent == "confirm_action":
-                # Tüm alanlara .get() ile güvenli erişim sağlandı
                 res = await self._bridge.execute_service(
                     action.get('domain'), 
                     action.get('service'), 
@@ -78,13 +91,16 @@ class ConversationOrchestrator:
                     action.get('service_data', {})
                 )
                 self._pending_actions[chat_id].remove(action)
+                status_text = f"✅ İşlem onaylandı, sonuç: {res.get('status', 'tamamlandı')}"
+            else:
+                self._pending_actions[chat_id].remove(action)
+                status_text = "❌ İşlem iptal edildi."
+            
+            # Ghost-Action Fix: Liste boşaldıysa dict'ten temizle
+            if not self._pending_actions[chat_id]:
+                del self._pending_actions[chat_id]
                 
-                if not self._pending_actions[chat_id]:
-                    del self._pending_actions[chat_id]
-                    
-                return {"text": f"✅ İşlem onaylandı, sonuç: {res.get('status')}"}
-
-        # ... (LLM akışı ve execute_service çağrısı)
+            return {"text": status_text}
 
         # 2. LLM İşleme
         raw = await self._store.build_context(chat_id)
@@ -107,13 +123,21 @@ class ConversationOrchestrator:
                 name = tool_call.function.name
 
                 if name == "save_fact":
-                    await self._store.save_fact(chat_id, args["category"], args["fact_text"], args["fact_key"])
+                    await self._store.save_fact(
+                        chat_id, 
+                        args.get("category"), 
+                        args.get("fact_text"), 
+                        args.get("fact_key")
+                    )
                     res = {"status": "ok"}
                 elif name == "search_devices":
-                    res = await self._bridge.get_available_entities(args["domain"], args.get("search"))
+                    res = await self._bridge.get_available_entities(
+                        args.get("domain", ""), 
+                        args.get("search")
+                    )
                 elif name == "execute_service":
                     entity_id = args.get("entity_id")
-                    real_domain = entity_id.split(".")[0] if entity_id else args.get("domain")
+                    real_domain = entity_id.split(".")[0] if entity_id else args.get("domain", "")
 
                     if real_domain in {"lock", "alarm_control_panel"}:
                         action_id = hashlib.shake_128(json.dumps(args).encode()).hexdigest(4)
@@ -121,10 +145,15 @@ class ConversationOrchestrator:
                         self._pending_actions.setdefault(chat_id, []).append(pending_action)
                         res = {"status": "pending_confirmation", "action_id": action_id}
                     else:
-                        # DÜZELTME: service_data varsayılan boş sözlük {}
                         res = await self._bridge.execute_service(
-                            args["domain"], args["service"], entity_id, args.get("service_data", {})
+                            args.get("domain", ""), 
+                            args.get("service", ""), 
+                            entity_id, 
+                            args.get("service_data", {})
                         )
+                        # Action Log Kaydı
+                        if entity_id:
+                            await self._store.log_action(chat_id, entity_id, args.get("domain", ""), args.get("service", ""), res.get("status", "unknown"))
                 else:
                     res = {"status": "error"}
                 
@@ -132,10 +161,10 @@ class ConversationOrchestrator:
 
             if pending_action:
                 return {
-                    "text": f"⚠️ '{pending_action['service']}' işlemi onay gerektiriyor.",
+                    "text": f"⚠️ '{pending_action.get('service')}' işlemi onay gerektiriyor.",
                     "buttons": [
-                        {"text": "✅ Onayla", "data": f"confirm_action:{pending_action['id']}"},
-                        {"text": "❌ İptal", "data": f"cancel_action:{pending_action['id']}"}
+                        {"text": "✅ Onayla", "data": f"confirm_action:{pending_action.get('id')}"},
+                        {"text": "❌ İptal", "data": f"cancel_action:{pending_action.get('id')}"}
                     ]
                 }
         return {"text": "İşlemi tamamlayamadım, çok fazla adım gerekti."}

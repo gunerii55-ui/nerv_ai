@@ -18,7 +18,6 @@ class MemoryStore:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                # Versiyon 3: fact_key kısıtlaması ile UNIQUE yapıldı
                 await cursor.execute("""
                     CREATE TABLE IF NOT EXISTS learned_facts_v3 (
                         chat_id TEXT NOT NULL,
@@ -27,6 +26,29 @@ class MemoryStore:
                         fact_key TEXT NOT NULL,
                         is_active INTEGER DEFAULT 1,
                         UNIQUE(chat_id, fact_key)
+                    )
+                """)
+                # Grup E: Action Log
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS action_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_id TEXT NOT NULL,
+                        entity_id TEXT NOT NULL,
+                        domain TEXT NOT NULL,
+                        service TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                await cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_action_log_entity_time 
+                    ON action_log(entity_id, created_at)
+                """)
+                # Grup D: System Config
+                await cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS system_config (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
                     )
                 """)
             await self._db.commit()
@@ -52,6 +74,28 @@ class MemoryStore:
             async with self._db.cursor() as cursor:
                 await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ? AND fact_key = ?", (chat_id, fact_key))
             await self._db.commit()
+
+    async def log_action(self, chat_id, entity_id, domain, service, status):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("""
+                    INSERT INTO action_log (chat_id, entity_id, domain, service, status) 
+                    VALUES (?, ?, ?, ?, ?)
+                """, (chat_id, entity_id, domain, service, status))
+            await self._db.commit()
+
+    async def save_config(self, key, value):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)", (key, value))
+            await self._db.commit()
+
+    async def get_config(self, key):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("SELECT value FROM system_config WHERE key = ?", (key,))
+                row = await cursor.fetchone()
+                return row[0] if row else None
 
     async def get_active_facts(self, chat_id: str) -> str:
         async with self._db_lock:
