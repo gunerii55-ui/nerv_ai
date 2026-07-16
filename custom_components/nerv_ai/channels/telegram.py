@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from telegram import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,32 +31,24 @@ class TelegramBot:
 
     async def _process_orchestrator_reply(self, chat_id, text_input, update_or_query):
         try:
-            from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-
             reply = await self._orchestrator.handle_message(str(chat_id), text_input)
             
-            if isinstance(reply, dict):
-                text = reply.get("text", "")
-                buttons_data = reply.get("buttons")
-                
-                if buttons_data:
-                    keyboard = [[InlineKeyboardButton(btn["text"], callback_data=btn["data"]) for btn in buttons_data]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    if hasattr(update_or_query, 'message') and update_or_query.message:
-                        await update_or_query.message.reply_text(text, reply_markup=reply_markup)
-                    else:
-                        await update_or_query.edit_message_text(text, reply_markup=reply_markup)
-                else:
-                    if hasattr(update_or_query, 'message') and update_or_query.message:
-                        await update_or_query.message.reply_text(text)
-                    else:
-                        await update_or_query.edit_message_text(text)
+            # Yanıt metin mi yoksa butonlu bir dict mi?
+            text = reply.get("text") if isinstance(reply, dict) else reply
+            buttons_data = reply.get("buttons") if isinstance(reply, dict) else None
+            
+            reply_markup = None
+            if buttons_data:
+                keyboard = [[InlineKeyboardButton(btn["text"], callback_data=btn["data"]) for btn in buttons_data]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # GÜVENLİ ARAYÜZ GÜNCELLEMESİ (Callback mi, Mesaj mı?)
+            if isinstance(update_or_query, CallbackQuery):
+                # Callback ise mevcut mesajı güncelle (edit)
+                await update_or_query.edit_message_text(text, reply_markup=reply_markup)
             else:
-                if hasattr(update_or_query, 'message') and update_or_query.message:
-                    await update_or_query.message.reply_text(reply)
-                else:
-                    await update_or_query.edit_message_text(reply)
+                # Yeni mesaj ise gönder (reply)
+                await update_or_query.message.reply_text(text, reply_markup=reply_markup)
                     
         except Exception as e:
             _LOGGER.error(f"Telegram Handle Hatası: {e}")
@@ -65,5 +58,6 @@ class TelegramBot:
 
     async def _handle_callback(self, update, context):
         query = update.callback_query
+        # Telegram arayüzündeki yükleniyor spinner'ını hemen durdur
         await query.answer()
         await self._process_orchestrator_reply(query.message.chat_id, query.data, query)

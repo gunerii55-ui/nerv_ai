@@ -1,12 +1,10 @@
-import json
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
 class MemoryStore:
     def __init__(self, db, db_lock):
-        self._db = db
-        self._db_lock = db_lock
+        self._db, self._db_lock = db, db_lock
 
     async def async_init_db(self):
         async with self._db_lock:
@@ -20,15 +18,15 @@ class MemoryStore:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                # Tablo versiyonlandı (v2). Eski çakışma atlatıldı.
+                # Versiyon 3: fact_key kısıtlaması ile UNIQUE yapıldı
                 await cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS learned_facts_v2 (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    CREATE TABLE IF NOT EXISTS learned_facts_v3 (
                         chat_id TEXT NOT NULL,
                         category TEXT NOT NULL,
                         fact_text TEXT NOT NULL,
+                        fact_key TEXT NOT NULL,
                         is_active INTEGER DEFAULT 1,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        UNIQUE(chat_id, fact_key)
                     )
                 """)
             await self._db.commit()
@@ -40,16 +38,25 @@ class MemoryStore:
                 await cursor.execute("INSERT INTO chat_history (chat_id, role, content) VALUES (?, ?, ?)", (chat_id, "assistant", assistant_text))
             await self._db.commit()
 
-    async def save_fact(self, chat_id: str, category: str, fact_text: str):
+    async def save_fact(self, chat_id: str, category: str, fact_text: str, fact_key: str):
         async with self._db_lock:
             async with self._db.cursor() as cursor:
-                await cursor.execute("INSERT INTO learned_facts_v2 (chat_id, category, fact_text) VALUES (?, ?, ?)", (chat_id, category, fact_text))
+                await cursor.execute("""
+                    INSERT OR REPLACE INTO learned_facts_v3 (chat_id, category, fact_text, fact_key) 
+                    VALUES (?, ?, ?, ?)
+                """, (chat_id, category, fact_text, fact_key))
+            await self._db.commit()
+
+    async def forget_fact(self, chat_id: str, fact_key: str):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ? AND fact_key = ?", (chat_id, fact_key))
             await self._db.commit()
 
     async def get_active_facts(self, chat_id: str) -> str:
         async with self._db_lock:
             async with self._db.cursor() as cursor:
-                await cursor.execute("SELECT category, fact_text FROM learned_facts_v2 WHERE chat_id = ? AND is_active = 1", (chat_id,))
+                await cursor.execute("SELECT category, fact_text FROM learned_facts_v3 WHERE chat_id = ? AND is_active = 1", (chat_id,))
                 rows = await cursor.fetchall()
         
         if not rows:
