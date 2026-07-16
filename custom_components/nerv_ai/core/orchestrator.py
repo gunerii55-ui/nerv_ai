@@ -22,7 +22,13 @@ class ConversationOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "execute_service",
-                    "description": "Cihazı kontrol et.",
+                    "description": (
+                        "Cihazı kontrol et. Servis adı domain'e göre değişir: "
+                        "light/switch/fan için 'turn_on'/'turn_off'; "
+                        "cover (kapı, garaj, panjur) için 'open_cover'/'close_cover'/'stop_cover' "
+                        "(ASLA 'open'/'close' değil); lock için 'lock'/'unlock'; "
+                        "climate için 'set_temperature'."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -82,7 +88,7 @@ class ConversationOrchestrator:
         context.extend(raw["recent_log"])
         context.append({"role": "user", "content": user_message})
 
-        for _ in range(3):
+        for _ in range(5):
             response = await self._provider.send_message(context, tools=self._tools)
             
             if not response.tool_calls:
