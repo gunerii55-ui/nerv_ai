@@ -2,7 +2,7 @@ import logging
 import json
 import asyncio
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class ConversationOrchestrator:
                 "function": {
                     "name": "get_usage_report",
                     "description": (
-                        "Kullanıcının son 7 gündeki cihaz kullanım eylemlerini (loglarını) getirir. "
+                        "Kullanıcının son 7 gündeki cihaz kullanım eylemlerini getirir. "
                         "Sonuç boş (empty list) dönerse, henüz yeterli kullanım verisi birikmediğini kullanıcıya nazikçe belirt."
                     ),
                     "parameters": {"type": "object", "properties": {}},
@@ -88,7 +88,7 @@ class ConversationOrchestrator:
                 "type": "function",
                 "function": {
                     "name": "get_unused_entities",
-                    "description": "Sistemde var olan ama daha önce hiç kullanılmayan (otomasyona/loglara girmeyen) cihazları tespit eder.",
+                    "description": "Sistemde var olan ama daha önce hiç kullanılmayan cihazları tespit eder.",
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
@@ -113,7 +113,6 @@ class ConversationOrchestrator:
                 self._pending_actions[chat_id].remove(action)
                 status_text = f"✅ İşlem onaylandı, sonuç: {res.get('status', 'tamamlandı')}"
                 
-                # Çift yönlü log: Onay gerektiren komutları da logla
                 await self._store.log_action(chat_id, action.get('entity_id'), action.get('domain'), action.get('service'), res.get('status', 'ok'))
             else:
                 self._pending_actions[chat_id].remove(action)
@@ -153,12 +152,12 @@ class ConversationOrchestrator:
                     formatted_logs = []
                     for log in raw_logs:
                         try:
-                            # SQLite CURRENT_TIMESTAMP native olarak YYYY-MM-DD HH:MM:SS formatında UTC döner.
-                            utc_dt = datetime.strptime(log["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt_util.UTC)
-                            local_dt = dt_util.as_local(utc_dt)
-                            log["created_at"] = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+                            dt_naive = datetime.strptime(log["created_at"], "%Y-%m-%d %H:%M:%S")
+                            dt_aware_utc = dt_naive.replace(tzinfo=timezone.utc)
+                            dt_local = dt_util.as_local(dt_aware_utc)
+                            log["created_at"] = dt_local.strftime("%Y-%m-%d %H:%M:%S")
                         except Exception as e:
-                            _LOGGER.debug(f"Time conversion error for log: {e}")
+                            _LOGGER.error(f"Zaman dönüştürme hatası: {e}")
                         formatted_logs.append(log)
                     res = {"status": "ok", "data": formatted_logs}
                 elif name == "get_unused_entities":
@@ -182,7 +181,6 @@ class ConversationOrchestrator:
                             entity_id, 
                             args.get("service_data", {})
                         )
-                        # Çift yönlü log: Doğrudan çalıştırılan komutları logla
                         if entity_id:
                             await self._store.log_action(chat_id, entity_id, args.get("domain", ""), args.get("service", ""), res.get("status", "unknown"))
                 else:
@@ -198,4 +196,4 @@ class ConversationOrchestrator:
                         {"text": "❌ İptal", "data": f"cancel_action:{pending_action.get('id')}"}
                     ]
                 }
-        return {"text": "İşlemi tamamlayamadım, çok fazla adım gerekti."}
+        return {"text": "İşlemi tamamlayamadım."}

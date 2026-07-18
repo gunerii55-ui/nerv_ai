@@ -1,6 +1,8 @@
 import logging
-from homeassistant.helpers.event import async_track_state_change_event, async_call_later
+from datetime import timedelta
+from homeassistant.helpers.event import async_track_state_change_event, async_call_later, async_track_time_interval
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, STATE_ON, STATE_OFF, STATE_OPEN, STATE_CLOSED
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -11,13 +13,11 @@ class ProactiveManager:
         self.store = store
         self._unsub_battery = None
         self._unsub_duration = None
+        self._unsub_cleanup = None
         self._notified_battery = set()
-        
-        # Timer referanslarını tutacağımız sözlük: { "entity_id": cancel_callable() }
         self._timers = {}
 
     async def setup_monitoring(self):
-        # 1. Batarya Takibi (D-1)
         battery_entities = [
             s.entity_id for s in self.hass.states.async_all()
             if s.attributes.get("device_class") == "battery"
@@ -27,7 +27,6 @@ class ProactiveManager:
                 self.hass, battery_entities, self._on_battery_change
             )
 
-        # 2. Süreli Açık Kalma Takibi (D-2) - Climate ve Cover
         duration_entities = [
             s.entity_id for s in self.hass.states.async_all()
             if s.domain in ["climate", "cover"] or (s.domain == "binary_sensor" and s.attributes.get("device_class") in ["door", "window"])
@@ -36,6 +35,47 @@ class ProactiveManager:
             self._unsub_duration = async_track_state_change_event(
                 self.hass, duration_entities, self._on_duration_change
             )
+            # D-2 Restart Uzlaştırması
+            await self._reconcile_on_startup(duration_entities)
+
+        # E-2 Periyodik Temizlik (7 günde bir rolling window taraması yapar)
+        self._unsub_cleanup = async_track_time_interval(
+            self.hass, self._run_periodic_cleanup, timedelta(days=7)
+        )
+
+    async def _reconcile_on_startup(self, tracked_entities):
+        now = dt_util.utcnow()
+        for entity_id in tracked_entities:
+            state = self.hass.states.get(entity_id)
+            if not state or state.state in [STATE_UNAVAILABLE, STATE_UNKNOWN]:
+                continue
+            
+            domain = entity_id.split(".")[0]
+            state_val = state.state
+
+            if (domain == "climate" and state_val != STATE_OFF) or \
+               (domain in ["cover", "binary_sensor"] and state_val == STATE_OPEN):
+                
+                delay = 21600 if domain == "climate" else 900
+                action_name = "klima" if domain == "climate" else "kapı/pencere"
+                
+                elapsed = (now - state.last_changed).total_seconds()
+                remaining = delay - elapsed
+
+                if remaining <= 0:
+                    await self._send_telegram_alert(
+                        f"⚠️ Uyarı: '{state.name}' adlı {action_name} uzun süredir açık (yeniden başlatma sonrası tespit edildi)!"
+                    )
+                else:
+                    self._timers[entity_id] = async_call_later(
+                        self.hass, remaining, self._create_timer_callback(entity_id, state.name, action_name)
+                    )
+
+    def _create_timer_callback(self, entity_id, name, action_name):
+        async def _timer_finished(now):
+            self._timers.pop(entity_id, None)
+            await self._send_telegram_alert(f"⚠️ Uyarı: '{name}' adlı {action_name} uzun süredir açık unutulmuş olabilir!")
+        return _timer_finished
 
     async def _on_battery_change(self, event):
         new_state = event.data.get("new_state")
@@ -64,34 +104,26 @@ class ProactiveManager:
         domain = entity_id.split(".")[0]
         state_val = new_state.state
 
-        # Klima açıldıysa veya Kapı/Pencere açıldıysa
         if (domain == "climate" and state_val != STATE_OFF) or \
            (domain in ["cover", "binary_sensor"] and state_val == STATE_OPEN):
             
-            # Zaten bir timer varsa dokunma
             if entity_id not in self._timers:
-                # Örnek: Klima için 6 saat (21600 sn), Kapı için 15 dakika (900 sn)
                 delay = 21600 if domain == "climate" else 900
                 action_name = "klima" if domain == "climate" else "kapı/pencere"
-                
-                # Callback fonksiyonu (Süre dolduğunda çalışacak)
-                async def _timer_finished(now):
-                    self._timers.pop(entity_id, None) # Timer bitti, referansı sil
-                    await self._send_telegram_alert(
-                        f"⚠️ Uyarı: '{new_state.name}' adlı {action_name} uzun süredir açık unutulmuş olabilir!"
-                    )
+                self._timers[entity_id] = async_call_later(
+                    self.hass, delay, self._create_timer_callback(entity_id, new_state.name, action_name)
+                )
 
-                # Timer'ı başlat ve iptal referansını sakla
-                self._timers[entity_id] = async_call_later(self.hass, delay, _timer_finished)
-
-        # Klima kapandıysa veya Kapı/Pencere kapandıysa
         elif (domain == "climate" and state_val == STATE_OFF) or \
              (domain in ["cover", "binary_sensor"] and state_val == STATE_CLOSED):
             
-            # Aktif timer varsa İPTAL ET
             cancel_timer = self._timers.pop(entity_id, None)
             if cancel_timer:
-                cancel_timer() # HA API: Çağrılabilir nesneyi çalıştırmak timer'ı iptal eder
+                cancel_timer()
+
+    async def _run_periodic_cleanup(self, now):
+        _LOGGER.info("Periyodik action_log temizliği başlatılıyor.")
+        await self.store.cleanup_action_logs()
 
     async def _send_telegram_alert(self, message):
         chat_id = await self.store.get_config("authorized_chat_id")
@@ -102,15 +134,15 @@ class ProactiveManager:
                 _LOGGER.error(f"Proaktif bildirim gönderilemedi: {e}")
 
     def unload(self):
-        # 1. Event listener'ları temizle
         if self._unsub_battery:
             self._unsub_battery()
         if self._unsub_duration:
             self._unsub_duration()
+        if self._unsub_cleanup:
+            self._unsub_cleanup()
             
-        # 2. Bekleyen tüm timer'ları güvenlice iptal et (Memory Leak Koruması)
         for cancel_timer in self._timers.values():
             cancel_timer()
         self._timers.clear()
         
-        _LOGGER.info("ProactiveManager güvenli bir şekilde kapatıldı ve timer'lar temizlendi.")
+        _LOGGER.info("ProactiveManager güvenli bir şekilde kapatıldı.")

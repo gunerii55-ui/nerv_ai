@@ -83,14 +83,13 @@ class MemoryStore:
             await self._db.commit()
 
     async def cleanup_action_logs(self):
-        """30 günden eski logları silerek rolling window uygular."""
         async with self._db_lock:
             async with self._db.cursor() as cursor:
                 await cursor.execute("DELETE FROM action_log WHERE created_at < datetime('now', '-30 days')")
             await self._db.commit()
 
     async def get_usage_report(self, chat_id: str) -> list[dict]:
-        await self.cleanup_action_logs() # Çağrıldığında temizlik yap
+        await self.cleanup_action_logs()
         async with self._db_lock:
             async with self._db.cursor() as cursor:
                 await cursor.execute("""
