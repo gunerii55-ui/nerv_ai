@@ -28,7 +28,6 @@ class MemoryStore:
                         UNIQUE(chat_id, fact_key)
                     )
                 """)
-                # Grup E: Action Log
                 await cursor.execute("""
                     CREATE TABLE IF NOT EXISTS action_log (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +43,6 @@ class MemoryStore:
                     CREATE INDEX IF NOT EXISTS idx_action_log_entity_time 
                     ON action_log(entity_id, created_at)
                 """)
-                # Grup D: System Config
                 await cursor.execute("""
                     CREATE TABLE IF NOT EXISTS system_config (
                         key TEXT PRIMARY KEY,
@@ -75,7 +73,7 @@ class MemoryStore:
                 await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ? AND fact_key = ?", (chat_id, fact_key))
             await self._db.commit()
 
-    async def log_action(self, chat_id, entity_id, domain, service, status):
+    async def log_action(self, chat_id: str, entity_id: str, domain: str, service: str, status: str):
         async with self._db_lock:
             async with self._db.cursor() as cursor:
                 await cursor.execute("""
@@ -83,6 +81,34 @@ class MemoryStore:
                     VALUES (?, ?, ?, ?, ?)
                 """, (chat_id, entity_id, domain, service, status))
             await self._db.commit()
+
+    async def cleanup_action_logs(self):
+        """30 günden eski logları silerek rolling window uygular."""
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("DELETE FROM action_log WHERE created_at < datetime('now', '-30 days')")
+            await self._db.commit()
+
+    async def get_usage_report(self, chat_id: str) -> list[dict]:
+        await self.cleanup_action_logs() # Çağrıldığında temizlik yap
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("""
+                    SELECT entity_id, domain, service, status, created_at 
+                    FROM action_log 
+                    WHERE chat_id = ? AND created_at >= datetime('now', '-7 days')
+                    ORDER BY created_at DESC LIMIT 50
+                """, (chat_id,))
+                rows = await cursor.fetchall()
+        
+        return [{"entity_id": r[0], "domain": r[1], "service": r[2], "status": r[3], "created_at": r[4]} for r in rows]
+
+    async def get_used_entities(self, chat_id: str) -> set:
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("SELECT DISTINCT entity_id FROM action_log WHERE chat_id = ?", (chat_id,))
+                rows = await cursor.fetchall()
+        return {r[0] for r in rows}
 
     async def save_config(self, key, value):
         async with self._db_lock:
