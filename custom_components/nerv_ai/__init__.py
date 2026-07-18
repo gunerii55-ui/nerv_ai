@@ -130,7 +130,7 @@ async def async_setup_entry(
 
     # Proaktif servis
     proactive = ProactiveManager(hass, bot, store)
-    await proactive.setup_battery_monitoring()
+    await proactive.setup_monitoring()
 
     hass.data[DOMAIN][entry.entry_id] = {
         "db": db,

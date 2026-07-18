@@ -35,10 +35,8 @@ class ProactiveManager:
             self._unsub_duration = async_track_state_change_event(
                 self.hass, duration_entities, self._on_duration_change
             )
-            # D-2 Restart Uzlaştırması
             await self._reconcile_on_startup(duration_entities)
 
-        # E-2 Periyodik Temizlik (7 günde bir rolling window taraması yapar)
         self._unsub_cleanup = async_track_time_interval(
             self.hass, self._run_periodic_cleanup, timedelta(days=7)
         )
@@ -63,9 +61,12 @@ class ProactiveManager:
                 remaining = delay - elapsed
 
                 if remaining <= 0:
-                    await self._send_telegram_alert(
-                        f"⚠️ Uyarı: '{state.name}' adlı {action_name} uzun süredir açık (yeniden başlatma sonrası tespit edildi)!"
-                    )
+                    # KRİTİK #2: DB kontrollü bildirim ve işaretleme
+                    if not await self.store.is_notified(entity_id):
+                        await self._send_telegram_alert(
+                            f"⚠️ Uyarı: '{state.name}' adlı {action_name} uzun süredir açık (yeniden başlatma sonrası tespit edildi)!"
+                        )
+                        await self.store.mark_notified(entity_id)
                 else:
                     self._timers[entity_id] = async_call_later(
                         self.hass, remaining, self._create_timer_callback(entity_id, state.name, action_name)
@@ -74,7 +75,10 @@ class ProactiveManager:
     def _create_timer_callback(self, entity_id, name, action_name):
         async def _timer_finished(now):
             self._timers.pop(entity_id, None)
-            await self._send_telegram_alert(f"⚠️ Uyarı: '{name}' adlı {action_name} uzun süredir açık unutulmuş olabilir!")
+            # KRİTİK #2: DB kontrollü bildirim ve işaretleme
+            if not await self.store.is_notified(entity_id):
+                await self._send_telegram_alert(f"⚠️ Uyarı: '{name}' adlı {action_name} uzun süredir açık unutulmuş olabilir!")
+                await self.store.mark_notified(entity_id)
         return _timer_finished
 
     async def _on_battery_change(self, event):
@@ -120,6 +124,9 @@ class ProactiveManager:
             cancel_timer = self._timers.pop(entity_id, None)
             if cancel_timer:
                 cancel_timer()
+                
+            # KRİTİK #2: Yeni döngü için temizlik
+            await self.store.clear_notified(entity_id)
 
     async def _run_periodic_cleanup(self, now):
         _LOGGER.info("Periyodik action_log temizliği başlatılıyor.")
