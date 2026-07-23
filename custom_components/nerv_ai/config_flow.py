@@ -13,37 +13,55 @@ class NervAIConfigFlow(config_entries.ConfigFlow, domain="nerv_ai"):
 
     @staticmethod
     def async_get_options_flow(config_entry):
-        return NervAIOptionsFlow()
+        return NervAIOptionsFlow(config_entry)
 
 
 class NervAIOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
     async def async_step_init(self, user_input=None):
+        errors = {}
+        registry = er.async_get(self.hass)
+        
         if user_input is not None:
-            entity_id = user_input.get("entity_id")
-            new_alias = user_input.get("alias")
-            
-            if entity_id and new_alias:
-                registry = er.async_get(self.hass)
+            # Toplu işleme ve non-destructive set-union güncellemesi
+            for entity_id, new_aliases in user_input.items():
                 entry = registry.async_get(entity_id)
-                if entry:
+                if entry and new_aliases:
                     existing = set(entry.aliases) if entry.aliases else set()
-                    existing.add(new_alias.strip())
+                    if isinstance(new_aliases, list):
+                        for a in new_aliases:
+                            existing.add(a.strip())
+                    else:
+                        existing.add(new_aliases.strip())
                     registry.async_update_entity(entity_id, aliases=existing)
-                    
             return self.async_create_entry(title="", data={})
+
+        # Sistemdeki geçerli cihazları ve mevcut alias'larını topla
+        valid_domains = [
+            "light", "switch", "cover", "lock", "climate", 
+            "fan", "alarm_control_panel", "media_player", "vacuum", "sensor"
+        ]
+        
+        schema_fields = {}
+        for state in self.hass.states.async_all():
+            if state.domain in valid_domains:
+                entry = registry.async_get(state.entity_id)
+                current_aliases = list(entry.aliases) if entry and entry.aliases else [state.name]
+                
+                # Her cihaz için AppDaemon tarzı çoklu metin/çip girişi
+                schema_fields[vol.Optional(state.entity_id, default=current_aliases)] = selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=current_aliases,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
+                        multiple=True
+                    )
+                )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required("entity_id"): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=[
-                            "light", "switch", "cover", "lock", "climate", 
-                            "fan", "alarm_control_panel", "media_player", 
-                            "vacuum", "sensor", "binary_sensor", "camera"
-                        ]
-                    )
-                ),
-                vol.Required("alias"): selector.TextSelector(),
-            })
+            data_schema=vol.Schema(schema_fields),
+            errors=errors
         )
