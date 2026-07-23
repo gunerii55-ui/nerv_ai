@@ -13,13 +13,10 @@ class NervAIConfigFlow(config_entries.ConfigFlow, domain="nerv_ai"):
 
     @staticmethod
     def async_get_options_flow(config_entry):
-        return NervAIOptionsFlow(config_entry)
+        return NervAIOptionsFlow()
 
 
 class NervAIOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             entity_id = user_input.get("entity_id")
