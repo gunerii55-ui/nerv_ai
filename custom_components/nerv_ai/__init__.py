@@ -33,7 +33,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         sidebar_title="NervAI Yönetim",
         sidebar_icon="mdi:robot-outline",
         require_admin=True,
-        module_url="/nervai_static/panel.js",
+        module_url="/nervai_static/panel.js?v=99",
         config={}
     )
 
