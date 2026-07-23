@@ -3,7 +3,7 @@ from homeassistant import config_entries
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-class NervAIConfigFlow(config_entries.ConfigFlow, domain="nervai"):
+class NervAIConfigFlow(config_entries.ConfigFlow, domain="nerv_ai"):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
