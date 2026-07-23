@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.components import panel_custom, websocket_api
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import config_validation as cv
 from .const import DOMAIN
@@ -19,10 +20,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Entegrasyonun global ve panel/websocket kayıt hazırlığı."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Statik dosya servisi (404 hatasını önlemek için)
+    # Statik dosya servisi (Güncellendi)
     frontend_path = hass.config.path("custom_components/nerv_ai/frontend")
     if os.path.exists(frontend_path):
-        hass.http.register_static_path("/nervai_static", frontend_path, cache_headers=False)
+        await hass.http.async_register_static_paths([
+            StaticPathConfig("/nervai_static", frontend_path, cache_headers=False)
+        ])
 
     # Sidebar özel panel kaydı
     await panel_custom.async_register_panel(
@@ -32,7 +35,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         sidebar_title="NervAI Yönetim",
         sidebar_icon="mdi:robot-outline",
         require_admin=True,
-        module_url="/nervai_static/panel.js",  # BU SATIR EKLENECEK
+        module_url="/nervai_static/panel.js",
         config={}
     )
 
@@ -331,7 +334,6 @@ async def ws_set_config(hass, connection, msg):
         if msg["token"] != "sk-masked":
             await store.set_config("token", msg["token"])
     
-    # Config entry'yi güncelleyip temiz bir şekilde reload et
     for entry in hass.config_entries.async_entries(DOMAIN):
         new_data = {**entry.data, "provider": msg["provider"], "model": msg["model"]}
         if msg["token"] != "sk-masked":
