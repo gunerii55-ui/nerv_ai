@@ -17,45 +17,51 @@ class NervAIConfigFlow(config_entries.ConfigFlow, domain="nerv_ai"):
 
 
 class NervAIOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self):
+        self.selected_entity = None
+
     async def async_step_init(self, user_input=None):
+        """Adım 1: Düzenlenecek cihazı seç."""
         errors = {}
-        registry = er.async_get(self.hass)
-        
         if user_input is not None:
-            for entity_id, new_aliases in user_input.items():
-                entry = registry.async_get(entity_id)
-                if entry and new_aliases:
-                    existing = set(entry.aliases) if entry.aliases else set()
-                    if isinstance(new_aliases, list):
-                        for a in new_aliases:
-                            existing.add(a.strip())
-                    else:
-                        existing.add(new_aliases.strip())
-                    registry.async_update_entity(entity_id, aliases=existing)
-            return self.async_create_entry(title="", data={})
+            self.selected_entity = user_input.get("entity_id")
+            return await self.async_step_edit_aliases()
 
         valid_domains = [
             "light", "switch", "cover", "lock", "climate", 
             "fan", "alarm_control_panel", "media_player", "vacuum", "sensor"
         ]
-        
-        schema_fields = {}
-        for state in self.hass.states.async_all():
-            if state.domain in valid_domains:
-                entry = registry.async_get(state.entity_id)
-                current_aliases = list(entry.aliases) if entry and entry.aliases else [state.name]
-                
-                schema_fields[vol.Optional(state.entity_id, default=current_aliases)] = selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=current_aliases,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                        multiple=True
-                    )
-                )
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(schema_fields),
+            data_schema=vol.Schema({
+                vol.Required("entity_id"): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain=valid_domains)
+                )
+            }),
             errors=errors
+        )
+
+    async def async_step_edit_aliases(self, user_input=None):
+        """Adım 2: Seçilen cihazın takma adlarını yönet."""
+        registry = er.async_get(self.hass)
+        entry = registry.async_get(self.selected_entity)
+        current_aliases = list(entry.aliases) if entry and entry.aliases else []
+
+        if user_input is not None:
+            new_alias = user_input.get("new_alias")
+            if new_alias and entry:
+                existing = set(entry.aliases) if entry.aliases else set()
+                existing.add(new_alias.strip())
+                registry.async_update_entity(self.selected_entity, aliases=existing)
+            return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(
+            step_id="edit_aliases",
+            data_schema=vol.Schema({
+                vol.Optional("current_aliases", default=", ".join(current_aliases)): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+                ),
+                vol.Required("new_alias"): selector.TextSelector(),
+            })
         )
