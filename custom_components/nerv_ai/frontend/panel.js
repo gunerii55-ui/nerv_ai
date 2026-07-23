@@ -6,13 +6,12 @@ class NervAIPanel extends HTMLElement {
         <style>
           .container { padding: 24px; font-family: var(--paper-font-body1_-_font-family); color: var(--primary-text-color); }
           h2, h3 { border-bottom: 2px solid var(--divider-color); padding-bottom: 8px; margin-top: 24px; }
-          .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; align-items: center; }
-          .filter-btn { background: var(--secondary-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
-          .filter-btn.active { background: var(--primary-color); color: var(--text-primary-color); border-color: var(--primary-color); }
+          .filter-bar { margin: 16px 0; }
+          .filter-input { width: 100%; max-width: 400px; padding: 8px 12px; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 4px; box-sizing: border-box; font-size: 14px; }
           table { width: 100%; border-collapse: collapse; margin-top: 16px; background: var(--card-background-color); margin-bottom: 24px; }
           th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--divider-color); }
           th { background: var(--secondary-background-color); }
-          input[type="text"] { width: 100%; padding: 6px; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 4px; box-sizing: border-box; }
+          input[type="text"].alias-input { width: 100%; padding: 6px; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 4px; box-sizing: border-box; }
           button { background: var(--primary-color); color: var(--text-primary-color); border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
           button.danger { background: var(--error-color, #db4437); }
           .section { margin-bottom: 32px; }
@@ -23,7 +22,9 @@ class NervAIPanel extends HTMLElement {
           
           <div class="section">
             <h3>Cihaz & Takma Ad Tablosu</h3>
-            <div id="filter-container" class="filter-bar"></div>
+            <div class="filter-bar">
+              <input type="text" id="entity-search" class="filter-input" placeholder="Cihaz, domain veya alias ara (örn: sensor, klima)..." oninput="window.nervAIController.handleSearch(this.value)">
+            </div>
             <div id="entities-area">Yükleniyor...</div>
           </div>
 
@@ -35,7 +36,7 @@ class NervAIPanel extends HTMLElement {
       `;
       this.content = this.querySelector(".container");
       this.allEntities = [];
-      this.currentDomainFilter = "all";
+      this.searchQuery = "";
       this.loadAllData();
     }
   }
@@ -47,39 +48,29 @@ class NervAIPanel extends HTMLElement {
 
   async loadEntities() {
     this.allEntities = await this._hass.callWS({ type: "nervai/get_entities" });
-    this.renderFilters();
     this.renderTable();
   }
 
-  renderFilters() {
-    const filterContainer = this.querySelector("#filter-container");
-    const domains = ["all", ...new Set(this.allEntities.map(e => e.domain))];
-    
-    let html = `<span style="font-weight:500; margin-right:4px;">Domain Filtresi:</span>`;
-    domains.forEach(d => {
-      const activeClass = this.currentDomainFilter === d ? "active" : "";
-      const label = d === "all" ? "Tümü" : d;
-      html += `<button class="filter-btn ${activeClass}" onclick="window.nervAIController.setFilter('${d}')">${label}</button>`;
-    });
-    filterContainer.innerHTML = html;
-  }
-
-  setDomainFilter(domain) {
-    this.currentDomainFilter = domain;
-    this.renderFilters();
+  handleSearch(query) {
+    this.searchQuery = query.toLowerCase().trim();
     this.renderTable();
   }
 
   renderTable() {
     const area = this.querySelector("#entities-area");
-    const filtered = this.currentDomainFilter === "all" 
-      ? this.allEntities 
-      : this.allEntities.filter(e => e.domain === this.currentDomainFilter);
+    const filtered = this.allEntities.filter(e => {
+      if (!this.searchQuery) return true;
+      const matchId = e.entity_id.toLowerCase().includes(this.searchQuery);
+      const matchName = e.name.toLowerCase().includes(this.searchQuery);
+      const matchDomain = e.domain.toLowerCase().includes(this.searchQuery);
+      const matchAlias = e.aliases && e.aliases.some(a => a.toLowerCase().includes(this.searchQuery));
+      return matchId || matchName || matchDomain || matchAlias;
+    });
 
     let html = `<table><tr><th>Entity ID</th><th>Orijinal İsim</th><th>Takma Adlar (Virgülle Ayırın)</th><th>Aksiyon</th></tr>`;
     
     if (filtered.length === 0) {
-      html += `<tr><td colspan="4" style="text-align:center; padding:20px;">Bu filtreye uygun cihaz bulunamadı.</td></tr>`;
+      html += `<tr><td colspan="4" style="text-align:center; padding:20px;">Arama kriterine uygun cihaz bulunamadı.</td></tr>`;
     } else {
       filtered.forEach(e => {
         const aliasesStr = Array.isArray(e.aliases) ? e.aliases.join(", ") : "";
@@ -87,7 +78,7 @@ class NervAIPanel extends HTMLElement {
           <tr>
             <td>${e.entity_id}</td>
             <td>${e.name}</td>
-            <td><input type="text" id="alias-${e.entity_id.replace(/\./g, '_')}" value="${aliasesStr}" placeholder="örn: salon klima, yatak odası"></td>
+            <td><input type="text" class="alias-input" id="alias-${e.entity_id.replace(/\./g, '_')}" value="${aliasesStr}"></td>
             <td><button onclick="window.nervAIController.saveAlias('${e.entity_id}')">Kaydet</button></td>
           </tr>`;
       });
@@ -137,7 +128,7 @@ class NervAIPanel extends HTMLElement {
 customElements.define("nervai-panel", NervAIPanel);
 
 window.nervAIController = {
-  setFilter: (d) => document.querySelector("nervai-panel").setDomainFilter(d),
+  handleSearch: (q) => document.querySelector("nervai-panel").handleSearch(q),
   saveAlias: (id) => document.querySelector("nervai-panel").saveAlias(id),
   resetChat: () => document.querySelector("nervai-panel").resetChat()
 };
