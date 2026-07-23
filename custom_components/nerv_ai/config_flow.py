@@ -13,19 +13,15 @@ class NervAIConfigFlow(config_entries.ConfigFlow, domain="nerv_ai"):
 
     @staticmethod
     def async_get_options_flow(config_entry):
-        return NervAIOptionsFlow(config_entry)
+        return NervAIOptionsFlow()
 
 
 class NervAIOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input=None):
         errors = {}
         registry = er.async_get(self.hass)
         
         if user_input is not None:
-            # Toplu işleme ve non-destructive set-union güncellemesi
             for entity_id, new_aliases in user_input.items():
                 entry = registry.async_get(entity_id)
                 if entry and new_aliases:
@@ -38,7 +34,6 @@ class NervAIOptionsFlow(config_entries.OptionsFlow):
                     registry.async_update_entity(entity_id, aliases=existing)
             return self.async_create_entry(title="", data={})
 
-        # Sistemdeki geçerli cihazları ve mevcut alias'larını topla
         valid_domains = [
             "light", "switch", "cover", "lock", "climate", 
             "fan", "alarm_control_panel", "media_player", "vacuum", "sensor"
@@ -50,7 +45,6 @@ class NervAIOptionsFlow(config_entries.OptionsFlow):
                 entry = registry.async_get(state.entity_id)
                 current_aliases = list(entry.aliases) if entry and entry.aliases else [state.name]
                 
-                # Her cihaz için AppDaemon tarzı çoklu metin/çip girişi
                 schema_fields[vol.Optional(state.entity_id, default=current_aliases)] = selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=current_aliases,
