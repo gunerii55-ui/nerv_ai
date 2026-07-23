@@ -15,17 +15,23 @@ class NervAIPanel extends HTMLElement {
           button { background: var(--primary-color); color: var(--text-primary-color); border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
           button.danger { background: var(--error-color, #db4437); }
           .section { margin-bottom: 32px; }
+          .fact-category { font-weight: bold; text-transform: uppercase; font-size: 11px; padding: 2px 6px; background: var(--secondary-background-color); border-radius: 4px; }
         </style>
         <div class="container">
           <h2>NervAI Operasyon ve Yönetim Konsolu</h2>
-          <p>Cihaz takma adları ve motor yapılandırması.</p>
+          <p>Cihaz takma adları, bot hafızası ve sistem ayarları.</p>
           
           <div class="section">
             <h3>Cihaz & Takma Ad Tablosu</h3>
             <div class="filter-bar">
-              <input type="text" id="entity-search" class="filter-input" placeholder="Cihaz, domain veya alias ara (örn: sensor, klima)..." oninput="window.nervAIController.handleSearch(this.value)">
+              <input type="text" id="entity-search" class="filter-input" placeholder="Cihaz veya alias ara (örn: sensor, klima)..." oninput="window.nervAIController.handleSearch(this.value)">
             </div>
             <div id="entities-area">Yükleniyor...</div>
+          </div>
+
+          <div class="section">
+            <h3>Botun Öğrendiği Kurallar & Hafıza (Facts)</h3>
+            <div id="facts-area">Yükleniyor...</div>
           </div>
 
           <div class="section">
@@ -36,6 +42,7 @@ class NervAIPanel extends HTMLElement {
       `;
       this.content = this.querySelector(".container");
       this.allEntities = [];
+      this.allFacts = [];
       this.searchQuery = "";
       this.loadAllData();
     }
@@ -43,12 +50,18 @@ class NervAIPanel extends HTMLElement {
 
   async loadAllData() {
     await this.loadEntities();
+    await this.loadFacts();
     await this.loadConfig();
   }
 
   async loadEntities() {
     this.allEntities = await this._hass.callWS({ type: "nervai/get_entities" });
     this.renderTable();
+  }
+
+  async loadFacts() {
+    this.allFacts = await this._hass.callWS({ type: "nervai/get_facts" });
+    this.renderFacts();
   }
 
   handleSearch(query) {
@@ -87,6 +100,27 @@ class NervAIPanel extends HTMLElement {
     area.innerHTML = html;
   }
 
+  renderFacts() {
+    const area = this.querySelector("#facts-area");
+    if (!this.allFacts || this.allFacts.length === 0) {
+      area.innerHTML = `<p style="color: var(--secondary-text-color);">Bot henüz hafızaya özel bir kural veya eşleme kaydetmemiş.</p>`;
+      return;
+    }
+
+    let html = `<table><tr><th>Kategori</th><th>Öğrenilen Kural / Bilgi</th><th>Anahtar (Key)</th><th>Aksiyon</th></tr>`;
+    this.allFacts.forEach(f => {
+      html += `
+        <tr>
+          <td><span class="fact-category">${f.category}</span></td>
+          <td>${f.fact_text}</td>
+          <td><code>${f.fact_key}</code></td>
+          <td><button class="danger" onclick="window.nervAIController.deleteFact('${f.fact_key}')">Sil</button></td>
+        </tr>`;
+    });
+    html += `</table>`;
+    area.innerHTML = html;
+  }
+
   async saveAlias(entityId) {
     const safeId = entityId.replace(/\./g, '_');
     const inputElem = this.querySelector(`#alias-${safeId}`);
@@ -103,8 +137,19 @@ class NervAIPanel extends HTMLElement {
     if (entity) {
       entity.aliases = aliases;
     }
-    alert(`${entityId} için takma adlar güncellendi.`);
+    alert(`${entityId} takma adları güncellendi.`);
     this.renderTable();
+  }
+
+  async deleteFact(factKey) {
+    if (confirm(`Bu kural hafızadan silinsin mi? (${factKey})`)) {
+      await this._hass.callWS({
+        type: "nervai/delete_fact",
+        fact_key: factKey
+      });
+      await this.loadFacts();
+      alert("Kural hafızadan silindi.");
+    }
   }
 
   async loadConfig() {
@@ -112,7 +157,7 @@ class NervAIPanel extends HTMLElement {
     const area = this.querySelector("#config-area");
     
     area.innerHTML = `
-      <p><b>Model:</b> ${conf.model}</p>
+      <p><b>Aktif Model:</b> ${conf.model}</p>
       <button class="danger" onclick="window.nervAIController.resetChat()">Yetkili Sohbeti (Chat ID) Sıfırla</button>
     `;
   }
@@ -130,5 +175,6 @@ customElements.define("nervai-panel", NervAIPanel);
 window.nervAIController = {
   handleSearch: (q) => document.querySelector("nervai-panel").handleSearch(q),
   saveAlias: (id) => document.querySelector("nervai-panel").saveAlias(id),
+  deleteFact: (key) => document.querySelector("nervai-panel").deleteFact(key),
   resetChat: () => document.querySelector("nervai-panel").resetChat()
 };
