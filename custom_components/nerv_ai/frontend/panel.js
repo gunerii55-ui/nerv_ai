@@ -24,7 +24,7 @@ class NervAIPanel extends HTMLElement {
           <div class="section">
             <h3>Cihaz & Takma Ad Tablosu</h3>
             <div class="filter-bar">
-              <input type="text" id="entity-search" class="filter-input" placeholder="Cihaz veya alias ara (örn: sensor, klima)..." oninput="window.nervAIController.handleSearch(this.value)">
+              <input type="text" id="entity-search" class="filter-input" placeholder="Cihaz veya alias ara (örn: sensor, klima)...">
             </div>
             <div id="entities-area">Yükleniyor...</div>
           </div>
@@ -44,6 +44,11 @@ class NervAIPanel extends HTMLElement {
       this.allEntities = [];
       this.allFacts = [];
       this.searchQuery = "";
+
+      this.querySelector("#entity-search").addEventListener("input", (e) => {
+        this.handleSearch(e.target.value);
+      });
+
       this.loadAllData();
     }
   }
@@ -92,12 +97,18 @@ class NervAIPanel extends HTMLElement {
             <td>${e.entity_id}</td>
             <td>${e.name}</td>
             <td><input type="text" class="alias-input" id="alias-${e.entity_id.replace(/\./g, '_')}" value="${aliasesStr}"></td>
-            <td><button onclick="window.nervAIController.saveAlias('${e.entity_id}')">Kaydet</button></td>
+            <td><button class="save-alias-btn" data-entity-id="${e.entity_id}">Kaydet</button></td>
           </tr>`;
       });
     }
     html += `</table>`;
     area.innerHTML = html;
+
+    area.querySelectorAll(".save-alias-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        this.saveAlias(btn.dataset.entityId);
+      });
+    });
   }
 
   renderFacts() {
@@ -114,11 +125,17 @@ class NervAIPanel extends HTMLElement {
           <td><span class="fact-category">${f.category}</span></td>
           <td>${f.fact_text}</td>
           <td><code>${f.fact_key}</code></td>
-          <td><button class="danger" onclick="window.nervAIController.deleteFact('${f.fact_key}')">Sil</button></td>
+          <td><button class="danger delete-fact-btn" data-fact-key="${f.fact_key}">Sil</button></td>
         </tr>`;
     });
     html += `</table>`;
     area.innerHTML = html;
+
+    area.querySelectorAll(".delete-fact-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        this.deleteFact(btn.dataset.factKey);
+      });
+    });
   }
 
   async saveAlias(entityId) {
@@ -158,8 +175,12 @@ class NervAIPanel extends HTMLElement {
     
     area.innerHTML = `
       <p><b>Aktif Model:</b> ${conf.model}</p>
-      <button class="danger" onclick="window.nervAIController.resetChat()">Yetkili Sohbeti (Chat ID) Sıfırla</button>
+      <button class="danger" id="reset-chat-btn">Yetkili Sohbeti (Chat ID) Sıfırla</button>
     `;
+
+    this.querySelector("#reset-chat-btn").addEventListener("click", () => {
+      this.resetChat();
+    });
   }
 
   async resetChat() {
@@ -171,10 +192,3 @@ class NervAIPanel extends HTMLElement {
 }
 
 customElements.define("nervai-panel", NervAIPanel);
-
-window.nervAIController = {
-  handleSearch: (q) => document.querySelector("nervai-panel").handleSearch(q),
-  saveAlias: (id) => document.querySelector("nervai-panel").saveAlias(id),
-  deleteFact: (key) => document.querySelector("nervai-panel").deleteFact(key),
-  resetChat: () => document.querySelector("nervai-panel").resetChat()
-};
