@@ -51,6 +51,20 @@ class MemoryStore:
                 """)
             await self._db.commit()
 
+    # --- KRİTİK #2: Restart Sonrası Çift Bildirim Önleme (Flag Metotları) ---
+    async def mark_notified(self, entity_id: str):
+        await self.save_config(f"notified:{entity_id}", "1")
+
+    async def clear_notified(self, entity_id: str):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("DELETE FROM system_config WHERE key = ?", (f"notified:{entity_id}",))
+            await self._db.commit()
+
+    async def is_notified(self, entity_id: str) -> bool:
+        return await self.get_config(f"notified:{entity_id}") == "1"
+    # ---------------------------------------------------------------------
+
     async def save_turn(self, chat_id: str, user_text: str, assistant_text: str):
         async with self._db_lock:
             async with self._db.cursor() as cursor:
