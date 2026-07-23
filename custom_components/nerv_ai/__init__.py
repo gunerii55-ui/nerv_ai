@@ -20,14 +20,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Entegrasyonun global ve panel/websocket kayıt hazırlığı."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Statik dosya servisi (Güncellendi)
     frontend_path = hass.config.path("custom_components/nerv_ai/frontend")
     if os.path.exists(frontend_path):
         await hass.http.async_register_static_paths([
             StaticPathConfig("/nervai_static", frontend_path, cache_headers=False)
         ])
 
-    # Sidebar özel panel kaydı
     await panel_custom.async_register_panel(
         hass,
         frontend_url_path="nervai",
@@ -39,7 +37,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         config={}
     )
 
-    # WebSocket API Komutları Kaydı
     websocket_api.async_register_command(hass, ws_get_entities)
     websocket_api.async_register_command(hass, ws_set_alias)
     websocket_api.async_register_command(hass, ws_get_facts)
@@ -52,12 +49,16 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 def _get_store(hass):
-    """Aktif ConfigEntry üzerinden MemoryStore nesnesini bulur."""
     domain_data = hass.data.get(DOMAIN, {})
     for key, val in domain_data.items():
         if isinstance(val, dict) and "store" in val:
             return val["store"]
     return None
+
+
+def _get_active_entry(hass):
+    entries = hass.config_entries.async_entries(DOMAIN)
+    return entries[0] if entries else None
 
 
 class HABridgeImpl:
@@ -239,11 +240,14 @@ async def async_unload_entry(
     return True
 
 
-# --- WebSocket Handlers (Admin Korumalı) ---
+# --- WebSocket Handlers ---
 
 @websocket_api.websocket_command({vol.Required("type"): "nervai/get_entities"})
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_get_entities(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     registry = er.async_get(hass)
     entities_data = []
     for state in hass.states.async_all():
@@ -263,8 +267,11 @@ async def ws_get_entities(hass, connection, msg):
     vol.Required("entity_id"): cv.entity_id,
     vol.Required("aliases"): [cv.string]
 })
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_set_alias(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     registry = er.async_get(hass)
     entry = registry.async_get(msg["entity_id"])
     if entry:
@@ -275,14 +282,17 @@ async def ws_set_alias(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "nervai/get_facts"})
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_get_facts(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     store = _get_store(hass)
     if not store:
         connection.send_result(msg["id"], [])
         return
     chat_id = await store.get_config("authorized_chat_id")
-    facts = await store.get_facts(chat_id) if chat_id else []
+    facts = await store.get_facts_list(chat_id) if chat_id else []
     connection.send_result(msg["id"], facts)
 
 
@@ -290,8 +300,11 @@ async def ws_get_facts(hass, connection, msg):
     vol.Required("type"): "nervai/delete_fact",
     vol.Required("fact_key"): cv.string
 })
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_delete_fact(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     store = _get_store(hass)
     if not store:
         connection.send_error(msg["id"], "no_store", "Store bulunamadı.")
@@ -305,15 +318,17 @@ async def ws_delete_fact(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "nervai/get_config"})
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_get_config(hass, connection, msg):
-    store = _get_store(hass)
-    if not store:
-        connection.send_result(msg["id"], {"provider": "openai", "model": "gpt-4o", "token": "sk-masked"})
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    entry = _get_active_entry(hass)
+    if not entry:
+        connection.send_result(msg["id"], {"model": "gpt-4o", "token": "sk-masked"})
         return
     conf = {
-        "provider": await store.get_config("provider") or "openai",
-        "model": await store.get_config("model") or "gpt-4o",
+        "model": entry.data.get("model", "gpt-4o"),
         "token": "sk-masked"
     }
     connection.send_result(msg["id"], conf)
@@ -321,34 +336,37 @@ async def ws_get_config(hass, connection, msg):
 
 @websocket_api.websocket_command({
     vol.Required("type"): "nervai/set_config",
-    vol.Required("provider"): cv.string,
     vol.Required("model"): cv.string,
     vol.Required("token"): cv.string
 })
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_set_config(hass, connection, msg):
-    store = _get_store(hass)
-    if store:
-        await store.set_config("provider", msg["provider"])
-        await store.set_config("model", msg["model"])
-        if msg["token"] != "sk-masked":
-            await store.set_config("token", msg["token"])
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        new_data = {**entry.data, "provider": msg["provider"], "model": msg["model"]}
+    entry = _get_active_entry(hass)
+    if entry:
+        new_data = {
+            **entry.data, 
+            "model": msg["model"]
+        }
         if msg["token"] != "sk-masked":
             new_data["openai_api_key"] = msg["token"]
+            
         hass.config_entries.async_update_entry(entry, data=new_data)
         await hass.config_entries.async_reload(entry.entry_id)
-        break
 
     connection.send_result(msg["id"], {"success": True})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "nervai/reset_chat"})
-@websocket_api.require_admin
+@websocket_api.async_response
 async def ws_reset_chat(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
     store = _get_store(hass)
     if store:
-        await store.set_config("authorized_chat_id", None)
+        await store.delete_config("authorized_chat_id")
     connection.send_result(msg["id"], {"success": True})

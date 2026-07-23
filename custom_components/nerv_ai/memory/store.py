@@ -51,7 +51,6 @@ class MemoryStore:
                 """)
             await self._db.commit()
 
-    # --- KRİTİK #2: Restart Sonrası Çift Bildirim Önleme (Flag Metotları) ---
     async def mark_notified(self, entity_id: str):
         await self.save_config(f"notified:{entity_id}", "1")
 
@@ -63,7 +62,6 @@ class MemoryStore:
 
     async def is_notified(self, entity_id: str) -> bool:
         return await self.get_config(f"notified:{entity_id}") == "1"
-    # ---------------------------------------------------------------------
 
     async def save_turn(self, chat_id: str, user_text: str, assistant_text: str):
         async with self._db_lock:
@@ -150,6 +148,17 @@ class MemoryStore:
             facts_str += f"- [{row[0].upper()}] {row[1]}\n"
         return facts_str
 
+    async def get_facts_list(self, chat_id: str) -> list[dict]:
+        """Panel için fact_key tabanlı yapılandırılmış kural listesini döndürür."""
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT fact_key, category, fact_text FROM learned_facts_v3 WHERE chat_id = ? AND is_active = 1",
+                    (chat_id,)
+                )
+                rows = await cursor.fetchall()
+        return [{"fact_key": r[0], "category": r[1], "fact_text": r[2]} for r in rows]
+
     async def build_context(self, chat_id: str, limit: int = 10) -> dict:
         async with self._db_lock:
             async with self._db.cursor() as cursor:
@@ -160,3 +169,8 @@ class MemoryStore:
         facts = await self.get_active_facts(chat_id)
         
         return {"recent_log": recent_log, "facts": facts}
+    async def delete_config(self, key: str):
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("DELETE FROM system_config WHERE key = ?", (key,))
+            await self._db.commit()
