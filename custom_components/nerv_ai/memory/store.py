@@ -169,13 +169,22 @@ class MemoryStore:
         facts = await self.get_active_facts(chat_id)
         
         return {"recent_log": recent_log, "facts": facts}
+
     async def delete_config(self, key: str):
         async with self._db_lock:
             async with self._db.cursor() as cursor:
                 await cursor.execute("DELETE FROM system_config WHERE key = ?", (key,))
             await self._db.commit()
+
     async def clear_all_facts(self, chat_id: str):
-    async with self._db_lock:
-        async with self._db.cursor() as cursor:
-            await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ?", (chat_id,))
-        await self._db.commit()
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ?", (chat_id,))
+            await self._db.commit()
+
+    async def get_total_action_count(self) -> int:
+        async with self._db_lock:
+            async with self._db.cursor() as cursor:
+                await cursor.execute("SELECT COUNT(*) FROM action_log")
+                row = await cursor.fetchone()
+                return row[0] if row else 0

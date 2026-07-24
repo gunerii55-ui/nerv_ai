@@ -1,19 +1,31 @@
 const STRINGS = {
   tr: {
-    sectionEntities: "Cihaz & Takma Ad Tablosu", sectionFacts: "Botun Öğrendiği Kurallar & Hafıza", sectionConfig: "Bağlantı & Motor Ayarları",
+    sectionEntities: "Cihaz & Takma Ad Tablosu", sectionFacts: "Botun Öğrendiği Kurallar & Hafıza",
+    sectionPending: "Bekleyen Onaylar", sectionHealth: "Sistem Durumu", sectionUsage: "Son 7 Gün Kullanım",
+    sectionConfig: "Bağlantı & Motor Ayarları",
     colEntityId: "Entity ID", colName: "Belirlenen İsim", colAddAlias: "Takma Ad Ekle", colAction: "Onay",
     colCategory: "Kategori", colFactText: "Öğrenilen Kural / Bilgi", colFactAction: "Aksiyon",
     filterPlaceholder: "Filtrele...", clearFilter: "Temizle", noEntities: "Filtreye uygun cihaz bulunamadı.", noFacts: "Bot henüz hafızaya özel bir kural kaydetmemiş.",
+    noPending: "Bekleyen onay yok.", noUsage: "Henüz kullanım verisi birikmedi.",
     cleanupAliases: "🧹 Bozuk Takma Adlarını Temizle", clearAllFacts: "🗑️ Tüm Kuralları Temizle",
-    telegramToken: "Telegram Bot Token", openaiKey: "OpenAI API Key", model: "Model", save: "Kaydet",
+    telegramToken: "Telegram Bot Token", openaiKey: "OpenAI API Key", model: "Model", save: "Kaydet", testConn: "🔌 Bağlantıyı Test Et",
+    confirm: "✅ Onayla", cancel: "❌ İptal", botStatus: "Bot Durumu", online: "Çevrimiçi", offline: "Çevrimdışı",
+    dbSize: "Veritabanı Boyutu", totalActions: "Toplam Kayıtlı İşlem", onlyExposed: "Sadece expose edilenler", allEntities: "Tümü",
+    lastUpdated: "Son güncelleme",
   },
   en: {
-    sectionEntities: "Devices & Alias Table", sectionFacts: "Bot's Learned Rules & Memory", sectionConfig: "Connection & Engine Settings",
+    sectionEntities: "Devices & Alias Table", sectionFacts: "Bot's Learned Rules & Memory",
+    sectionPending: "Pending Confirmations", sectionHealth: "System Status", sectionUsage: "Last 7 Days Usage",
+    sectionConfig: "Connection & Engine Settings",
     colEntityId: "Entity ID", colName: "Assigned Name", colAddAlias: "Add Alias", colAction: "Confirm",
     colCategory: "Category", colFactText: "Learned Rule / Info", colFactAction: "Action",
-    filterPlaceholder: "Filter...", clearFilter: "Clear", noEntities: "No devices match the filter.", noFacts: "The bot hasn't saved any rules yet.",
+    filterPlaceholder: "Filter...", clearFilter: "Clear", noEntities: "No devices match.", noFacts: "No rules saved yet.",
+    noPending: "No pending confirmations.", noUsage: "No usage data yet.",
     cleanupAliases: "🧹 Clean Up Broken Aliases", clearAllFacts: "🗑️ Clear All Rules",
-    telegramToken: "Telegram Bot Token", openaiKey: "OpenAI API Key", model: "Model", save: "Save",
+    telegramToken: "Telegram Bot Token", openaiKey: "OpenAI API Key", model: "Model", save: "Save", testConn: "🔌 Test Connection",
+    confirm: "✅ Confirm", cancel: "❌ Cancel", botStatus: "Bot Status", online: "Online", offline: "Offline",
+    dbSize: "Database Size", totalActions: "Total Logged Actions", onlyExposed: "Exposed only", allEntities: "All",
+    lastUpdated: "Last updated",
   },
 };
 
@@ -22,12 +34,13 @@ class NervAIPanel extends HTMLElement {
     this._hass = hass;
     if (!this.content) {
       this.lang = "tr";
-      this.sectionsOpen = { entities: false, facts: false };
+      this.sectionsOpen = { entities: false, facts: false, pending: true, health: true, usage: false };
       this.openFilterCol = null;
       this.colFilters = { entity_id: "", name: "" };
       this.factFilter = "";
       this.sortKey = null; this.sortAsc = true;
       this.editingFactKey = null;
+      this.onlyExposed = true;
 
       this.innerHTML = `
         <style>
@@ -40,7 +53,7 @@ class NervAIPanel extends HTMLElement {
           .section-header.open .chevron { transform:rotate(90deg); }
           .section-body { max-height:0; overflow:hidden; transition:max-height .3s ease; }
           .section-body.open { max-height:6000px; overflow:visible; }
-          .action-bar { margin:12px 0; display:flex; gap:8px; }
+          .action-bar { margin:12px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
           table { width:100%; border-collapse:collapse; margin-top:8px; background:var(--card-background-color); margin-bottom:16px; }
           th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--divider-color); font-size:14px; }
           th { background:var(--secondary-background-color); position:relative; }
@@ -49,9 +62,8 @@ class NervAIPanel extends HTMLElement {
           th .filter-icon.active { opacity:1; color:var(--primary-color); }
           .filter-popover { position:absolute; top:100%; left:0; background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:4px; padding:8px; z-index:10; box-shadow:0 2px 8px rgba(0,0,0,.3); min-width:180px; }
           .filter-popover input { width:100%; padding:6px; box-sizing:border-box; margin-bottom:6px; background:var(--primary-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); border-radius:4px; }
-          .filter-popover button { font-size:12px; padding:4px 8px; }
-          input[type="text"].alias-input, input[type="password"].cfg-input { width:100%; padding:6px; background:var(--card-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); border-radius:4px; box-sizing:border-box; }
-          button.icon-btn { background:var(--primary-color); color:white; border:none; width:32px; height:32px; border-radius:4px; cursor:pointer; }
+          input[type="text"].alias-input, input[type="password"].cfg-input, input[type="text"].cfg-input { width:100%; padding:6px; background:var(--card-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); border-radius:4px; box-sizing:border-box; }
+          button.icon-btn { background:var(--primary-color); color:white; border:none; padding:8px 14px; border-radius:4px; cursor:pointer; }
           button.pencil-btn { background:none; border:none; cursor:pointer; font-size:15px; }
           button.danger { background:var(--error-color,#db4437); color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; }
           button.secondary { background:var(--secondary-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); padding:6px 12px; border-radius:4px; cursor:pointer; }
@@ -61,15 +73,32 @@ class NervAIPanel extends HTMLElement {
           .toast { position:fixed; bottom:20px; right:20px; background:var(--card-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color); padding:12px 20px; border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,.3); z-index:1000; }
           .cfg-form { display:flex; flex-direction:column; gap:12px; max-width:420px; }
           .cfg-form label { font-size:13px; font-weight:bold; }
+          .health-grid { display:flex; gap:16px; flex-wrap:wrap; margin:12px 0; }
+          .health-card { background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:6px; padding:12px 18px; min-width:160px; }
+          .health-card .label { font-size:12px; color:var(--secondary-text-color); }
+          .health-card .value { font-size:20px; font-weight:bold; }
+          .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+          .dot.on { background:#4caf50; } .dot.off { background:#db4437; }
+          .pending-card { background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:6px; padding:12px 16px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+          footer.nervai-footer { margin-top:32px; padding-top:12px; border-top:1px solid var(--divider-color); font-size:12px; color:var(--secondary-text-color); }
           mark { background:#ffe082; color:inherit; }
         </style>
         <div class="container">
           <div class="topbar"><button class="lang-btn" data-lang="tr">TR</button><button class="lang-btn" data-lang="en">EN</button></div>
           <div id="global-error"></div>
 
+          <div class="section-header" id="toggle-health"><span class="chevron">▶</span><span id="title-health"></span></div>
+          <div class="section-body" id="body-health"><div id="health-area">…</div></div>
+
+          <div class="section-header" id="toggle-pending"><span class="chevron">▶</span><span id="title-pending"></span><span class="count-badge" id="count-pending"></span></div>
+          <div class="section-body" id="body-pending"><div id="pending-area">…</div></div>
+
           <div class="section-header" id="toggle-entities"><span class="chevron">▶</span><span id="title-entities"></span><span class="count-badge" id="count-entities"></span></div>
           <div class="section-body" id="body-entities">
-            <div class="action-bar"><button class="secondary" id="cleanup-aliases-btn"></button></div>
+            <div class="action-bar">
+              <button class="secondary" id="cleanup-aliases-btn"></button>
+              <label style="font-size:13px;"><input type="checkbox" id="only-exposed-toggle" checked> <span id="only-exposed-label"></span></label>
+            </div>
             <div id="entities-area">…</div>
           </div>
 
@@ -82,23 +111,38 @@ class NervAIPanel extends HTMLElement {
             <div id="facts-area">…</div>
           </div>
 
+          <div class="section-header" id="toggle-usage"><span class="chevron">▶</span><span id="title-usage"></span></div>
+          <div class="section-body" id="body-usage"><div id="usage-area">…</div></div>
+
           <h3 id="title-config" style="border-bottom:2px solid var(--divider-color); padding-bottom:8px; margin-top:24px;"></h3>
           <div id="config-area">…</div>
+
+          <footer class="nervai-footer" id="footer-area"></footer>
         </div>`;
       this.content = this.querySelector(".container");
 
       this.querySelectorAll(".lang-btn").forEach(b => b.addEventListener("click", () => { this.lang = b.dataset.lang; this.rerenderAll(); }));
-      this.querySelector("#toggle-entities").addEventListener("click", () => this.toggleSection("entities"));
-      this.querySelector("#toggle-facts").addEventListener("click", () => this.toggleSection("facts"));
+      ["entities","facts","pending","health","usage"].forEach(key => {
+        this.querySelector(`#toggle-${key}`).addEventListener("click", () => this.toggleSection(key));
+      });
       this.querySelector("#cleanup-aliases-btn").addEventListener("click", () => this.cleanupAliases());
       this.querySelector("#clear-facts-btn").addEventListener("click", () => this.clearAllFacts());
       this.querySelector("#fact-filter-input").addEventListener("input", (e) => { this.factFilter = e.target.value.toLowerCase(); this.renderFacts(); });
+      this.querySelector("#only-exposed-toggle").addEventListener("change", (e) => { this.onlyExposed = e.target.checked; this.renderTable(); });
 
       document.addEventListener("click", (e) => {
         if (!e.target.closest(".filter-icon") && !e.target.closest(".filter-popover")) { this.openFilterCol = null; this.renderTable(); }
       });
 
-      this.allEntities = []; this.allFacts = [];
+      // Bölüm açık/kapalı durumu ilk yüklemede uygulanıyor
+      Object.keys(this.sectionsOpen).forEach(key => {
+        if (this.sectionsOpen[key]) {
+          this.querySelector(`#toggle-${key}`).classList.add("open");
+          this.querySelector(`#body-${key}`).classList.add("open");
+        }
+      });
+
+      this.allEntities = []; this.allFacts = []; this.allPending = []; this.health = {}; this.usage = [];
       this.loadAllData();
     }
   }
@@ -119,21 +163,76 @@ class NervAIPanel extends HTMLElement {
   rerenderAll() {
     this.querySelector("#title-entities").textContent = this.t("sectionEntities");
     this.querySelector("#title-facts").textContent = this.t("sectionFacts");
+    this.querySelector("#title-pending").textContent = this.t("sectionPending");
+    this.querySelector("#title-health").textContent = this.t("sectionHealth");
+    this.querySelector("#title-usage").textContent = this.t("sectionUsage");
     this.querySelector("#title-config").textContent = this.t("sectionConfig");
     this.querySelector("#cleanup-aliases-btn").textContent = this.t("cleanupAliases");
     this.querySelector("#clear-facts-btn").textContent = this.t("clearAllFacts");
     this.querySelector("#fact-filter-input").placeholder = this.t("filterPlaceholder");
+    this.querySelector("#only-exposed-label").textContent = this.t("onlyExposed");
     this.querySelectorAll(".lang-btn").forEach(b => b.classList.toggle("active", b.dataset.lang === this.lang));
     this.querySelector("#count-entities").textContent = this.allEntities.length;
     this.querySelector("#count-facts").textContent = this.allFacts.length;
-    this.renderTable(); this.renderFacts(); this.renderConfig();
+    this.querySelector("#count-pending").textContent = this.allPending.length;
+    this.renderHealth(); this.renderPending(); this.renderTable(); this.renderFacts(); this.renderUsage(); this.renderConfig();
+    this.querySelector("#footer-area").textContent = `NervAI v1.2 — ${this.t("lastUpdated")}: ${new Date().toLocaleString(this.lang === "tr" ? "tr-TR" : "en-US")}`;
   }
 
   async loadAllData() {
     try { this.allEntities = await this._hass.callWS({ type: "nervai/get_entities" }); } catch (e) { this.showError("Cihaz listesi", e); }
     try { this.allFacts = await this._hass.callWS({ type: "nervai/get_facts" }); } catch (e) { this.showError("Kurallar", e); }
     try { this._conf = await this._hass.callWS({ type: "nervai/get_config" }); } catch (e) { this.showError("Ayarlar", e); }
+    try { this.allPending = await this._hass.callWS({ type: "nervai/get_pending_actions" }); } catch (e) { this.allPending = []; }
+    try { this.health = await this._hass.callWS({ type: "nervai/get_health" }); } catch (e) { this.health = {}; }
+    try { this.usage = await this._hass.callWS({ type: "nervai/get_recent_usage" }); } catch (e) { this.usage = []; }
     this.rerenderAll();
+  }
+
+  renderHealth() {
+    const area = this.querySelector("#health-area");
+    const h = this.health || {};
+    area.innerHTML = `<div class="health-grid">
+      <div class="health-card"><div class="label">${this.t("botStatus")}</div><div class="value"><span class="dot ${h.bot_online ? "on" : "off"}"></span>${h.bot_online ? this.t("online") : this.t("offline")}</div></div>
+      <div class="health-card"><div class="label">${this.t("dbSize")}</div><div class="value">${h.db_size_kb != null ? h.db_size_kb + " KB" : "—"}</div></div>
+      <div class="health-card"><div class="label">${this.t("totalActions")}</div><div class="value">${h.total_actions != null ? h.total_actions : "—"}</div></div>
+    </div>`;
+  }
+
+  renderPending() {
+    const area = this.querySelector("#pending-area");
+    if (!this.allPending.length) { area.innerHTML = `<p style="color:var(--secondary-text-color)">${this.t("noPending")}</p>`; return; }
+    let html = "";
+    this.allPending.forEach(p => {
+      html += `<div class="pending-card">
+        <div><b>${this.escapeHtml(p.domain)}.${this.escapeHtml(p.service)}</b> → ${this.escapeHtml(p.entity_id || "?")}</div>
+        <div><button class="icon-btn confirm-btn" data-id="${this.escapeHtml(p.id)}">${this.t("confirm")}</button>
+             <button class="danger cancel-btn" data-id="${this.escapeHtml(p.id)}">${this.t("cancel")}</button></div>
+      </div>`;
+    });
+    area.innerHTML = html;
+    area.querySelectorAll(".confirm-btn").forEach(b => b.addEventListener("click", () => this.resolvePending(b.dataset.id, true)));
+    area.querySelectorAll(".cancel-btn").forEach(b => b.addEventListener("click", () => this.resolvePending(b.dataset.id, false)));
+  }
+
+  async resolvePending(actionId, confirm) {
+    try {
+      await this._hass.callWS({ type: "nervai/resolve_pending_action", action_id: actionId, confirm });
+      this.allPending = this.allPending.filter(p => p.id !== actionId);
+      this.renderPending();
+      this.showToast(confirm ? "✅ Onaylandı." : "❌ İptal edildi.");
+    } catch (e) { this.showError("İşlem güncellenemedi", e); }
+  }
+
+  renderUsage() {
+    const area = this.querySelector("#usage-area");
+    if (!this.usage.length) { area.innerHTML = `<p style="color:var(--secondary-text-color)">${this.t("noUsage")}</p>`; return; }
+    let html = `<table><tr><th>Entity</th><th>Servis</th><th>Durum</th><th>Zaman</th></tr>`;
+    this.usage.forEach(u => {
+      html += `<tr><td>${this.escapeHtml(u.entity_id)}</td><td>${this.escapeHtml(u.domain)}.${this.escapeHtml(u.service)}</td><td>${this.escapeHtml(u.status)}</td><td>${this.escapeHtml(u.created_at)}</td></tr>`;
+    });
+    html += `</table>`;
+    area.innerHTML = html;
   }
 
   toggleFilterPopover(col) { this.openFilterCol = this.openFilterCol === col ? null : col; this.renderTable(); }
@@ -142,6 +241,7 @@ class NervAIPanel extends HTMLElement {
   renderTable() {
     const area = this.querySelector("#entities-area");
     let filtered = this.allEntities.filter(e => {
+      if (this.onlyExposed && e.exposed === false) return false;
       const nameCombined = `${e.name} ${(e.aliases||[]).join(" ")}`.toLowerCase();
       if (this.colFilters.entity_id && !e.entity_id.toLowerCase().includes(this.colFilters.entity_id)) return false;
       if (this.colFilters.name && !nameCombined.includes(this.colFilters.name)) return false;
@@ -149,7 +249,10 @@ class NervAIPanel extends HTMLElement {
     });
     if (this.sortKey) {
       filtered = [...filtered].sort((a,b) => {
-        const av=(a[this.sortKey]||"").toString().toLowerCase(), bv=(b[this.sortKey]||"").toString().toLowerCase();
+        let av, bv;
+        if (this.sortKey === "alias_count") { av = (a.aliases||[]).length; bv = (b.aliases||[]).length; }
+        else { av=(a[this.sortKey]||"").toString().toLowerCase(); bv=(b[this.sortKey]||"").toString().toLowerCase(); }
+        if (typeof av === "number") return this.sortAsc ? av - bv : bv - av;
         return this.sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       });
     }
@@ -160,10 +263,15 @@ class NervAIPanel extends HTMLElement {
         <button class="secondary popover-clear" data-col="${col}">${this.t('clearFilter')}</button>
       </div>` : ""}`;
 
-    let html = `<table><tr>
+    // Otomatik tamamlama için tüm mevcut alias'ları datalist'e topla
+    const allAliasSet = new Set();
+    this.allEntities.forEach(e => (e.aliases || []).forEach(a => allAliasSet.add(a)));
+    let datalistHtml = `<datalist id="alias-suggestions">${[...allAliasSet].map(a => `<option value="${this.escapeHtml(a)}">`).join("")}</datalist>`;
+
+    let html = datalistHtml + `<table><tr>
       <th><span class="th-label" data-sort="entity_id">${this.t("colEntityId")}</span>${filterIcon("entity_id")}</th>
       <th><span class="th-label" data-sort="name">${this.t("colName")}</span>${filterIcon("name")}</th>
-      <th>${this.t("colAddAlias")}</th>
+      <th><span class="th-label" data-sort="alias_count">${this.t("colAddAlias")}</span></th>
       <th>${this.t("colAction")}</th>
     </tr>`;
 
@@ -178,7 +286,7 @@ class NervAIPanel extends HTMLElement {
         html += `<tr>
           <td>${this.escapeHtml(e.entity_id)}</td>
           <td>${nameCell}</td>
-          <td><input type="text" class="alias-input" id="newalias-${e.entity_id.replace(/\./g,"_")}" placeholder="ör: mutfak ışığı"></td>
+          <td><input type="text" class="alias-input" list="alias-suggestions" id="newalias-${e.entity_id.replace(/\./g,"_")}" placeholder="ör: mutfak ışığı"></td>
           <td><button class="icon-btn" data-entity-id="${this.escapeHtml(e.entity_id)}">✓</button></td>
         </tr>`;
       });
@@ -270,12 +378,16 @@ class NervAIPanel extends HTMLElement {
     const c = this._conf || {};
     area.innerHTML = `
       <div class="cfg-form">
-        <div><label>${this.t("telegramToken")}</label><input type="password" class="cfg-input" id="cfg-telegram" placeholder="${this.escapeHtml(c.telegram_token || "sk-masked")}"></div>
+        <div><label>${this.t("telegramToken")}</label><input type="password" class="cfg-input" id="cfg-telegram" placeholder="${this.escapeHtml(c.telegram_token || "tg-masked")}"></div>
         <div><label>${this.t("openaiKey")}</label><input type="password" class="cfg-input" id="cfg-openai" placeholder="${this.escapeHtml(c.token || "sk-masked")}"></div>
         <div><label>${this.t("model")}</label><input type="text" class="cfg-input" id="cfg-model" value="${this.escapeHtml(c.model || "")}"></div>
-        <button class="icon-btn" id="cfg-save-btn" style="width:auto; padding:8px 16px;">${this.t("save")}</button>
+        <div style="display:flex; gap:8px;">
+          <button class="icon-btn" id="cfg-save-btn">${this.t("save")}</button>
+          <button class="secondary" id="cfg-test-btn">${this.t("testConn")}</button>
+        </div>
       </div>`;
     this.querySelector("#cfg-save-btn").addEventListener("click", () => this.saveConfig());
+    this.querySelector("#cfg-test-btn").addEventListener("click", () => this.testConnection());
   }
 
   async saveConfig() {
@@ -283,14 +395,16 @@ class NervAIPanel extends HTMLElement {
     const openai = this.querySelector("#cfg-openai").value.trim();
     const model = this.querySelector("#cfg-model").value.trim();
     try {
-      await this._hass.callWS({
-        type: "nervai/set_config",
-        model: model,
-        token: openai || "sk-masked",
-        telegram_token: telegram || "tg-masked",
-      });
+      await this._hass.callWS({ type: "nervai/set_config", model, token: openai || "sk-masked", telegram_token: telegram || "tg-masked" });
       this.showToast("✅ Ayarlar kaydedildi, entegrasyon yeniden başlatılıyor...");
     } catch (e) { this.showError("Ayarlar kaydedilemedi", e); }
+  }
+
+  async testConnection() {
+    try {
+      const res = await this._hass.callWS({ type: "nervai/test_connection" });
+      this.showToast(res.ok ? "✅ Bağlantı başarılı." : `⚠️ ${res.message}`);
+    } catch (e) { this.showError("Test başarısız", e); }
   }
 }
 customElements.define("nervai-panel", NervAIPanel);

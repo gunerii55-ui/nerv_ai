@@ -47,6 +47,11 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_update_fact)
     websocket_api.async_register_command(hass, ws_cleanup_bad_aliases)
     websocket_api.async_register_command(hass, ws_clear_all_facts)
+    websocket_api.async_register_command(hass, ws_get_pending_actions)
+    websocket_api.async_register_command(hass, ws_resolve_pending_action)
+    websocket_api.async_register_command(hass, ws_get_health)
+    websocket_api.async_register_command(hass, ws_get_recent_usage)
+    websocket_api.async_register_command(hass, ws_test_connection)
 
     return True
 
@@ -56,6 +61,14 @@ def _get_store(hass):
     for key, val in domain_data.items():
         if isinstance(val, dict) and "store" in val:
             return val["store"]
+    return None
+
+
+def _get_orchestrator(hass):
+    domain_data = hass.data.get(DOMAIN, {})
+    for key, val in domain_data.items():
+        if isinstance(val, dict) and "orchestrator" in val:
+            return val["orchestrator"]
     return None
 
 
@@ -190,6 +203,7 @@ async def async_setup_entry(
         "store": store,
         "telegram_bot": bot,
         "proactive": proactive,
+        "orchestrator": orchestrator,
     }
 
     hass.async_create_background_task(
@@ -260,7 +274,8 @@ async def ws_get_entities(hass, connection, msg):
             "name": state.name,
             "domain": state.domain,
             "area": entry.area_id if entry else None,
-            "aliases": list(entry.aliases) if entry and entry.aliases else []
+            "aliases": list(entry.aliases) if entry and entry.aliases else [],
+            "exposed": async_should_expose(hass, "conversation", state.entity_id)
         })
     connection.send_result(msg["id"], entities_data)
 
@@ -427,3 +442,81 @@ async def ws_clear_all_facts(hass, connection, msg):
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "no_chat_id", "Aktif chat_id bulunamadı.")
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/get_pending_actions"})
+@websocket_api.async_response
+async def ws_get_pending_actions(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    orch = _get_orchestrator(hass)
+    store = _get_store(hass)
+    chat_id = await store.get_config("authorized_chat_id") if store else None
+    actions = orch._pending_actions.get(chat_id, []) if orch and chat_id else []
+    connection.send_result(msg["id"], actions)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "nervai/resolve_pending_action",
+    vol.Required("action_id"): cv.string,
+    vol.Required("confirm"): cv.boolean,
+})
+@websocket_api.async_response
+async def ws_resolve_pending_action(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    orch = _get_orchestrator(hass)
+    store = _get_store(hass)
+    chat_id = await store.get_config("authorized_chat_id") if store else None
+    if orch and chat_id:
+        prefix = "confirm_action" if msg["confirm"] else "cancel_action"
+        await orch.handle_message(chat_id, f"{prefix}:{msg['action_id']}")
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/get_health"})
+@websocket_api.async_response
+async def ws_get_health(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    entry_data = next((v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, dict) and "telegram_bot" in v), None)
+    bot_online = bool(entry_data and entry_data["telegram_bot"].app and entry_data["telegram_bot"].app.updater and entry_data["telegram_bot"].app.updater.running)
+    db_path = hass.config.path(f".storage/nerv_ai_{_get_active_entry(hass).entry_id}.db") if _get_active_entry(hass) else None
+    db_size_kb = round(os.path.getsize(db_path) / 1024, 1) if db_path and os.path.exists(db_path) else None
+    store = _get_store(hass)
+    total_actions = await store.get_total_action_count() if store else None
+    connection.send_result(msg["id"], {"bot_online": bot_online, "db_size_kb": db_size_kb, "total_actions": total_actions})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/get_recent_usage"})
+@websocket_api.async_response
+async def ws_get_recent_usage(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    store = _get_store(hass)
+    chat_id = await store.get_config("authorized_chat_id") if store else None
+    data = await store.get_usage_report(chat_id) if store and chat_id else []
+    connection.send_result(msg["id"], data)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/test_connection"})
+@websocket_api.async_response
+async def ws_test_connection(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    entry = _get_active_entry(hass)
+    if not entry:
+        connection.send_result(msg["id"], {"ok": False, "message": "Entegrasyon bulunamadı."})
+        return
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=entry.data.get("openai_api_key"))
+        await client.models.list()
+        connection.send_result(msg["id"], {"ok": True})
+    except Exception as e:
+        connection.send_result(msg["id"], {"ok": False, "message": str(e)})
