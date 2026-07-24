@@ -44,6 +44,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_get_config)
     websocket_api.async_register_command(hass, ws_set_config)
     websocket_api.async_register_command(hass, ws_reset_chat)
+    websocket_api.async_register_command(hass, ws_update_fact)
+    websocket_api.async_register_command(hass, ws_cleanup_bad_aliases)
 
     return True
 
@@ -370,3 +372,42 @@ async def ws_reset_chat(hass, connection, msg):
     if store:
         await store.delete_config("authorized_chat_id")
     connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "nervai/update_fact",
+    vol.Required("fact_key"): cv.string,
+    vol.Required("category"): cv.string,
+    vol.Required("fact_text"): cv.string,
+})
+@websocket_api.async_response
+async def ws_update_fact(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    store = _get_store(hass)
+    chat_id = await store.get_config("authorized_chat_id") if store else None
+    if store and chat_id:
+        await store.save_fact(chat_id, msg["category"], msg["fact_text"], msg["fact_key"])
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "no_chat_id", "Aktif chat_id bulunamadı.")
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/cleanup_bad_aliases"})
+@websocket_api.async_response
+async def ws_cleanup_bad_aliases(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    
+    registry = er.async_get(hass)
+    cleaned_count = 0
+    
+    for entity_id, entry in registry.entities.items():
+        if entry.aliases and "0" in entry.aliases:
+            cleaned_aliases = set(entry.aliases) - {"0"}
+            registry.async_update_entity(entity_id, aliases=cleaned_aliases)
+            cleaned_count += 1
+            
+    connection.send_result(msg["id"], {"success": True, "cleaned_count": cleaned_count})
