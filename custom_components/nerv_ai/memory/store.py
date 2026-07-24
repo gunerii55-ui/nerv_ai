@@ -174,3 +174,8 @@ class MemoryStore:
             async with self._db.cursor() as cursor:
                 await cursor.execute("DELETE FROM system_config WHERE key = ?", (key,))
             await self._db.commit()
+    async def clear_all_facts(self, chat_id: str):
+    async with self._db_lock:
+        async with self._db.cursor() as cursor:
+            await cursor.execute("DELETE FROM learned_facts_v3 WHERE chat_id = ?", (chat_id,))
+        await self._db.commit()

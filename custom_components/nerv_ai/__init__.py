@@ -46,6 +46,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_reset_chat)
     websocket_api.async_register_command(hass, ws_update_fact)
     websocket_api.async_register_command(hass, ws_cleanup_bad_aliases)
+    websocket_api.async_register_command(hass, ws_clear_all_facts)
 
     return True
 
@@ -326,12 +327,10 @@ async def ws_get_config(hass, connection, msg):
         connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
         return
     entry = _get_active_entry(hass)
-    if not entry:
-        connection.send_result(msg["id"], {"model": "gpt-4o", "token": "sk-masked"})
-        return
     conf = {
-        "model": entry.data.get("model", "gpt-4o"),
-        "token": "sk-masked"
+        "model": entry.data.get("model", "gpt-4o") if entry else "gpt-4o",
+        "token": "sk-masked",
+        "telegram_token": "tg-masked"
     }
     connection.send_result(msg["id"], conf)
 
@@ -339,26 +338,28 @@ async def ws_get_config(hass, connection, msg):
 @websocket_api.websocket_command({
     vol.Required("type"): "nervai/set_config",
     vol.Required("model"): cv.string,
-    vol.Required("token"): cv.string
+    vol.Required("token"): cv.string,
+    vol.Required("telegram_token"): cv.string,
 })
 @websocket_api.async_response
 async def ws_set_config(hass, connection, msg):
     if not connection.user.is_admin:
         connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
         return
-    
     entry = _get_active_entry(hass)
     if entry:
         new_data = {
-            **entry.data, 
+            **entry.data,
             "model": msg["model"]
         }
         if msg["token"] != "sk-masked":
             new_data["openai_api_key"] = msg["token"]
+        if msg["telegram_token"] != "tg-masked":
+            new_data["telegram_token"] = msg["telegram_token"]
             
         hass.config_entries.async_update_entry(entry, data=new_data)
         await hass.config_entries.async_reload(entry.entry_id)
-
+        
     connection.send_result(msg["id"], {"success": True})
 
 
@@ -411,3 +412,18 @@ async def ws_cleanup_bad_aliases(hass, connection, msg):
             cleaned_count += 1
             
     connection.send_result(msg["id"], {"success": True, "cleaned_count": cleaned_count})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "nervai/clear_all_facts"})
+@websocket_api.async_response
+async def ws_clear_all_facts(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin yetkisi gerekli.")
+        return
+    store = _get_store(hass)
+    chat_id = await store.get_config("authorized_chat_id") if store else None
+    if store and chat_id:
+        await store.clear_all_facts(chat_id)
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "no_chat_id", "Aktif chat_id bulunamadı.")
